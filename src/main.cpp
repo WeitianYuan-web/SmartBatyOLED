@@ -2,6 +2,7 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <math.h>
+#include <WiFi.h>
 
 // OLED显示器类
 class OLEDDisplay {
@@ -12,6 +13,7 @@ private:
   float current;
   String deviceID;
   String deviceIP;
+  bool wifiConnected;
   
   // 互斥锁，用于保护显示数据
   SemaphoreHandle_t displayMutex;
@@ -89,9 +91,12 @@ private:
 
   // 绘制WiFi图标
   void drawWiFi(uint8_t x, uint8_t y) {
-    u8g2.drawCircle(x, y, 6, U8G2_DRAW_UPPER_RIGHT);
-    u8g2.drawCircle(x, y, 4, U8G2_DRAW_UPPER_RIGHT);
-    u8g2.drawCircle(x, y, 2, U8G2_DRAW_UPPER_RIGHT);
+    // 根据连接状态决定是否闪烁
+    if (wifiConnected || (millis() / 500) % 2) {
+      u8g2.drawCircle(x, y, 6, U8G2_DRAW_UPPER_RIGHT);
+      u8g2.drawCircle(x, y, 4, U8G2_DRAW_UPPER_RIGHT);
+      u8g2.drawCircle(x, y, 2, U8G2_DRAW_UPPER_RIGHT);
+    }
   }
 
   // 计算功率
@@ -105,7 +110,8 @@ public:
                   batteryCells(0),
                   current(0.0),
                   deviceID(""),
-                  deviceIP("") {
+                  deviceIP("0.0.0.0"),
+                  wifiConnected(false) {
     displayMutex = xSemaphoreCreateMutex();
   }
 
@@ -119,13 +125,14 @@ public:
   }
 
   // 线程安全的数据更新方法
-  void updateData(float voltage, int cells, float amp, const String& id, const String& ip) {
+  void updateData(float voltage, int cells, float amp, const String& id, const String& ip, bool wifiStatus) {
     if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
       batteryVoltage = voltage;
       batteryCells = cells;
       current = amp;
       deviceID = id;
       deviceIP = ip;
+      wifiConnected = wifiStatus;
       xSemaphoreGive(displayMutex);
     }
   }
@@ -180,6 +187,17 @@ public:
       xSemaphoreGive(displayMutex);
     }
   }
+
+  // 更新WiFi状态和IP
+  void updateWiFiStatus(bool connected, const String& ip) {
+    if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      wifiConnected = connected;
+      if (connected) {
+        deviceIP = ip;
+      }
+      xSemaphoreGive(displayMutex);
+    }
+  }
 };
 
 // 创建全局显示器实例
@@ -198,6 +216,8 @@ class SimulatedData {
 private:
     float time = 0.0;
     const float PI2 = 2.0 * PI;
+    String currentIP = "0.0.0.0";
+    bool isWiFiConnected = false;
     
     // 在指定范围内生成正弦波形数据
     float generateSineWave(float min, float max, float frequency, float phase = 0.0) {
@@ -213,7 +233,16 @@ public:
         int cells;
         String deviceID;
         String deviceIP;
+        bool wifiConnected;
     };
+
+    // 更新WiFi状态和IP
+    void updateWiFiStatus(bool connected, const String& ip) {
+        isWiFiConnected = connected;
+        if (connected) {
+            currentIP = ip;
+        }
+    }
 
     // 获取模拟数据
     SensorData getData() {
@@ -251,7 +280,8 @@ public:
         data.current = generateSineWave(0.0, 6.0, 0.05, PI/4);
         
         data.deviceID = "ID:A001";
-        data.deviceIP = "192.168.1.100";
+        data.deviceIP = currentIP;
+        data.wifiConnected = isWiFiConnected;
 
         time += 0.1;
         return data;
@@ -273,40 +303,98 @@ void updateTask(void *parameter) {
             data.cells,
             data.current,
             data.deviceID,
-            data.deviceIP
+            data.deviceIP,
+            data.wifiConnected
         );
         
         vTaskDelay(pdMS_TO_TICKS(100));  // 每100ms更新一次数据
     }
 }
 
+// WiFi配置
+const char* ssid = "CMCC-JM3A";
+const char* password = "18771407258";
+
+// WiFi事件处理
+void WiFiEvent(WiFiEvent_t event) {
+    switch(event) {
+        case SYSTEM_EVENT_STA_GOT_IP:
+            simulator.updateWiFiStatus(true, WiFi.localIP().toString());
+            break;
+        case SYSTEM_EVENT_STA_DISCONNECTED:
+            simulator.updateWiFiStatus(false, "Disconnected");
+            WiFi.reconnect();
+            break;
+        case SYSTEM_EVENT_STA_START:
+            break;
+        case SYSTEM_EVENT_STA_CONNECTED:
+            break;
+        default:
+            break;
+    }
+}
+
+// WiFi连接任务
+void wifiTask(void *parameter) {
+    // 注册WiFi事件处理函数
+    WiFi.onEvent(WiFiEvent);
+    
+    // 设置WiFi模式
+    WiFi.mode(WIFI_STA);
+    
+    // 开始连接WiFi
+    WiFi.begin(ssid, password);
+    
+    while (1) {
+        if (WiFi.status() != WL_CONNECTED) {
+            // 如果断开连接，尝试重连
+            WiFi.reconnect();
+            simulator.updateWiFiStatus(false, "Connecting...");
+        } else {
+            // 确保IP地址始终是最新的
+            simulator.updateWiFiStatus(true, WiFi.localIP().toString());
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));  // 每5秒检查一次连接状态
+    }
+}
+
 void setup() {
-  Serial.begin(115200);
-  
-  if (!display.begin()) {
-    Serial.println("OLED显示器初始化失败!");
-    while (1);
-  }
+    if (!display.begin()) {
+        while (1);  // 如果OLED初始化失败，停止运行
+    }
 
-  // 创建显示任务
-  xTaskCreate(
-    displayTask,          // 任务函数
-    "DisplayTask",        // 任务名称
-    4096,                // 堆栈大小
-    NULL,                // 任务参数
-    2,                   // 优先级
-    NULL                 // 任务句柄
-  );
+    // 创建WiFi任务 - 在核心0上运行
+    xTaskCreatePinnedToCore(
+        wifiTask,
+        "WiFiTask",
+        8192,        // 8K堆栈
+        NULL,
+        1,
+        NULL,
+        0           // 在核心0上运行
+    );
 
-  // 创建数据更新任务
-  xTaskCreate(
-    updateTask,          // 任务函数
-    "UpdateTask",        // 任务名称
-    4096,               // 堆栈大小
-    NULL,               // 任务参数
-    1,                  // 优先级
-    NULL                // 任务句柄
-  );
+    // 创建显示任务 - 在核心0上运行
+    xTaskCreatePinnedToCore(
+        displayTask,
+        "DisplayTask",
+        4096,
+        NULL,
+        2,
+        NULL,
+        0           // 在核心0上运行
+    );
+
+    // 创建数据更新任务 - 在核心0上运行
+    xTaskCreatePinnedToCore(
+        updateTask,
+        "UpdateTask",
+        4096,
+        NULL,
+        1,
+        NULL,
+        0           // 在核心0上运行
+    );
 }
 
 void loop() {
