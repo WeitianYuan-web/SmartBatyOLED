@@ -14,6 +14,7 @@ private:
   String deviceID;
   String deviceIP;
   bool wifiConnected;
+  int chipTemperature;
   
   // 互斥锁，用于保护显示数据
   SemaphoreHandle_t displayMutex;
@@ -104,6 +105,13 @@ private:
     return voltage * current;
   }
 
+  // 绘制温度图标
+  void drawTemperature(uint8_t x, uint8_t y) {
+    // 简单的温度计图标
+    u8g2.drawCircle(x + 2, y + 5, 2);  // 温度计底部圆形
+    u8g2.drawVLine(x + 2, y, 4);       // 温度计柱体
+  }
+
 public:
   OLEDDisplay() : u8g2(U8G2_R0), 
                   batteryVoltage(0.0),
@@ -111,7 +119,8 @@ public:
                   current(0.0),
                   deviceID(""),
                   deviceIP("0.0.0.0"),
-                  wifiConnected(false) {
+                  wifiConnected(false),
+                  chipTemperature(0) {
     displayMutex = xSemaphoreCreateMutex();
   }
 
@@ -125,7 +134,7 @@ public:
   }
 
   // 线程安全的数据更新方法
-  void updateData(float voltage, int cells, float amp, const String& id, const String& ip, bool wifiStatus) {
+  void updateData(float voltage, int cells, float amp, const String& id, const String& ip, bool wifiStatus, float temp) {
     if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
       batteryVoltage = voltage;
       batteryCells = cells;
@@ -133,6 +142,7 @@ public:
       deviceID = id;
       deviceIP = ip;
       wifiConnected = wifiStatus;
+      chipTemperature = temp;
       xSemaphoreGive(displayMutex);
     }
   }
@@ -147,6 +157,7 @@ public:
       u8g2.drawHLine(0, 19, 128);
       u8g2.drawVLine(50, 0, 19);  // 第一个分隔线
       u8g2.drawVLine(85, 0, 19);  // 第二个分隔线
+      u8g2.drawVLine(103, 19, 13);  // 第二个分隔线
 
       // 左侧电压显示
       drawBattery(2, 2, batteryVoltage, batteryCells);
@@ -182,6 +193,13 @@ public:
       u8g2.print(deviceID);
       u8g2.print(" ");
       u8g2.print(deviceIP);
+      
+      // 在底部信息区域添加温度显示
+      //drawTemperature(90, 22);
+      u8g2.setFont(u8g2_font_5x8_tf);
+      u8g2.setCursor(105, 30);
+      u8g2.print(chipTemperature, 1);
+      u8g2.print("C");
       
       u8g2.sendBuffer();
       xSemaphoreGive(displayMutex);
@@ -226,6 +244,12 @@ private:
         return middle + amplitude * sin(PI2 * frequency * time + phase);
     }
 
+    // 获取芯片温度
+    float getChipTemperature() {
+        // 模拟读取ESP32内部温度传感器
+        return random(20 , 120);
+    }
+
 public:
     struct SensorData {
         float voltage;
@@ -234,6 +258,7 @@ public:
         String deviceID;
         String deviceIP;
         bool wifiConnected;
+        int temperature;  // 添加温度字段
     };
 
     // 更新WiFi状态和IP
@@ -279,9 +304,12 @@ public:
         // 电流保持不变
         data.current = generateSineWave(0.0, 6.0, 0.05, PI/4);
         
-        data.deviceID = "ID:A001";
+        data.deviceID = "A01";
         data.deviceIP = currentIP;
         data.wifiConnected = isWiFiConnected;
+
+        // 添加温度数据
+        data.temperature = getChipTemperature();
 
         time += 0.1;
         return data;
@@ -294,20 +322,19 @@ SimulatedData simulator;
 // 修改数据更新任务
 void updateTask(void *parameter) {
     while (1) {
-        // 获取模拟数据
         SimulatedData::SensorData data = simulator.getData();
         
-        // 更新显示
         display.updateData(
             data.voltage,
             data.cells,
             data.current,
             data.deviceID,
             data.deviceIP,
-            data.wifiConnected
+            data.wifiConnected,
+            data.temperature    // 添加温度数据
         );
         
-        vTaskDelay(pdMS_TO_TICKS(100));  // 每100ms更新一次数据
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
