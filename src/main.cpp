@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <math.h>
 #include <WiFi.h>
+#include "INA226.h"  // 添加INA226头文件
 
 #define EN 10
 // INA226相关定义
@@ -21,14 +22,8 @@ float shuntResistor = 0.005; // 分流电阻值，单位：欧姆（5毫欧）
 float currentLSB;            // 电流LSB值
 float powerLSB;              // 功率LSB值
 
-// INA226函数声明
-void initINA226();
-float readBusVoltage();
-float readShuntVoltage();
-float readCurrent();
-float readPower();
-void writeRegister(uint8_t reg, uint16_t value);
-uint16_t readRegister(uint8_t reg);
+// 创建INA226实例
+INA226 ina226(0x40, 0.005);  // 地址0x40，分流电阻0.005欧姆
 
 // OLED显示器类
 class OLEDDisplay {
@@ -37,6 +32,7 @@ private:
   float batteryVoltage;
   int batteryCells;
   float current;
+  float batteryPower;
   String deviceID;
   String deviceIP;
   bool wifiConnected;
@@ -143,6 +139,7 @@ public:
                   batteryVoltage(0.0),
                   batteryCells(0),
                   current(0.0),
+                  batteryPower(0.0),
                   deviceID(""),
                   deviceIP("0.0.0.0"),
                   wifiConnected(false),
@@ -160,11 +157,12 @@ public:
   }
 
   // 线程安全的数据更新方法
-  void updateData(float voltage, int cells, float amp, const String& id, const String& ip, bool wifiStatus, float temp) {
+  void updateData(float voltage, int cells, float amp, float power, const String& id, const String& ip, bool wifiStatus, float temp) {
     if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
       batteryVoltage = voltage;
       batteryCells = cells;
       current = amp;
+      batteryPower = power;
       deviceID = id;
       deviceIP = ip;
       wifiConnected = wifiStatus;
@@ -195,10 +193,11 @@ public:
       u8g2.print("V");
 
       // 中间功率显示
-      float power = calculatePower(batteryVoltage, current);
       u8g2.setFont(u8g2_font_6x10_tf);  // 使用更小的字体显示功率
       u8g2.setCursor(52, 14);
-      u8g2.print(power, 1);
+      // 当功率小于0.1时显示0
+      float displayPower = (batteryPower < 0.1) ? 0.0 : batteryPower;
+      u8g2.print(displayPower, 1);
       u8g2.setFont(u8g2_font_5x7_tf);
       u8g2.setCursor(78, 14);
       u8g2.print("W");
@@ -207,9 +206,24 @@ public:
       drawLightning(87, 6);
       u8g2.setFont(u8g2_font_7x13B_tr);
       u8g2.setCursor(95, 14);  // 右移电流显示位置
-      u8g2.print(current, 1);
+      
+      // 当电流绝对值小于0.1时显示0
+      float displayCurrent = (abs(current) < 0.1) ? 0.0 : current;
+      
+      // 根据电流大小调整显示格式
+      if (abs(displayCurrent) < 1.0 ) {
+        // 小于1A时，显示为".XX"格式
+        char currentStr[10];
+        int decimalPart = abs(displayCurrent) * 100;
+        sprintf(currentStr, ".%02d", decimalPart);
+        u8g2.print(currentStr);
+      } else {
+        // 大于等于1A或等于0时，正常显示
+        u8g2.print(displayCurrent, 1);
+      }
+      
       u8g2.setFont(u8g2_font_5x7_tf);
-      u8g2.setCursor(120, 14);
+      u8g2.setCursor(121, 14);
       u8g2.print("A");
 
       // 底部信息
@@ -259,9 +273,7 @@ void displayTask(void *parameter) {
 String deviceID = "A01";  // 默认设备ID
 const char* ssid = "CMCC-JM3A";  // 默认WiFi SSID
 const char* password = "18771407258";  // 默认WiFi密码
-bool enState = false;  // EN引脚状态
-
-
+bool enState = true;  // EN引脚状态
 
 // 处理用户命令
 void processCommand(const String& command) {
@@ -334,13 +346,13 @@ void processCommand(const String& command) {
             Serial.println(WiFi.localIP().toString());
         }
         Serial.print("  电压: ");
-        Serial.print(readBusVoltage(), 2);
+        Serial.print(ina226.readBusVoltage(), 2);  // 使用INA226类方法
         Serial.println(" V");
         Serial.print("  电流: ");
-        Serial.print(readCurrent(), 3);
+        Serial.print(ina226.readCurrent(), 3);  // 使用INA226类方法
         Serial.println(" A");
         Serial.print("  功率: ");
-        Serial.print(readPower(), 2);
+        Serial.print(ina226.readPower(), 2);  // 使用INA226类方法
         Serial.println(" W");
         Serial.print("  温度: ");
         Serial.print(temperatureRead(), 1);
@@ -351,7 +363,7 @@ void processCommand(const String& command) {
     }
 }
 
-// 修改BatteryMonitor类以使用全局deviceID
+// 修改BatteryMonitor类以使用INA226类
 class BatteryMonitor {
 private:
     String currentIP = "0.0.0.0";
@@ -367,6 +379,7 @@ public:
     struct SensorData {
         float voltage;
         float current;
+        float power;
         int cells;
         String deviceID;
         String deviceIP;
@@ -387,8 +400,9 @@ public:
         SensorData data;
         
         // 从INA226读取实际电压和电流
-        data.voltage = readBusVoltage();
-        data.current = readCurrent();
+        data.voltage = ina226.readBusVoltageFiltered();  // 使用带滤波的方法
+        data.current = ina226.readCurrentFiltered();     // 使用带滤波的方法
+        data.power = ina226.readPowerFiltered();        // 使用带滤波的方法
         
         // 根据电压自动判断电池节数
         if (data.voltage < 4.5) {
@@ -431,6 +445,7 @@ void userControlTask(void *parameter) {
     pinMode(EN, OUTPUT);
     digitalWrite(EN, enState ? HIGH : LOW);
     
+
     while (1) {
         if (Serial.available()) {
             char c = Serial.read();
@@ -463,6 +478,7 @@ void updateTask(void *parameter) {
             data.voltage,
             data.cells,
             data.current,
+            data.power,
             data.deviceID,
             data.deviceIP,
             data.wifiConnected,
@@ -472,8 +488,6 @@ void updateTask(void *parameter) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
-
-
 
 // WiFi事件处理
 void WiFiEvent(WiFiEvent_t event) {
@@ -520,14 +534,29 @@ void wifiTask(void *parameter) {
 
 void setup() {
     Serial.begin(115200);
+    Wire.begin();  // 确保I2C初始化
     
     // 初始化EN引脚
     pinMode(EN, OUTPUT);
     digitalWrite(EN, enState ? HIGH : LOW);
-    
+
     // 初始化INA226
-    initINA226();
-    
+    if (ina226.begin(6.0))
+    {
+        Serial.println("INA226初始化成功");
+    }
+    else
+    {
+        Serial.println("INA226初始化失败");
+    }
+
+    // 设置偏移补偿
+    ina226.setCurrentOffset(-0.012);
+    ina226.setPowerOffset(0);
+
+    // 设置滤波参数（可选）
+    ina226.setFilterAlpha(0.8);
+
     if (!display.begin()) {
         Serial.println("OLED初始化失败!");
         while (1);  // 如果OLED初始化失败，停止运行
@@ -581,82 +610,4 @@ void setup() {
 void loop() {
   // 在FreeRTOS中，loop()可以为空
   vTaskDelete(NULL);  // 删除setup/loop任务
-}
-
-// INA226函数实现
-void initINA226() {
-    // 设置校准值
-    // 最大预期电流，设置为6A
-    float maxExpectedCurrent = 6.0;
-    
-    // 计算电流LSB (最大电流/2^15)
-    currentLSB = maxExpectedCurrent / 32768;
-    
-    // 计算功率LSB (25倍电流LSB)
-    powerLSB = currentLSB * 25;
-    
-    // 计算校准寄存器值
-    uint16_t calibrationValue = (uint16_t)((0.00512) / (currentLSB * shuntResistor));
-    
-    // 写入校准值
-    writeRegister(CALIB_REG, calibrationValue);
-    
-    // 配置INA226
-    // 设置配置寄存器：
-    // - 16次平均采样
-    // - 1.1ms转换时间
-    // - 连续测量分流和总线电压
-    uint16_t config = 0x4127;
-    writeRegister(CONFIG_REG, config);
-    
-    Serial.print("校准值: ");
-    Serial.println(calibrationValue);
-    Serial.print("电流LSB: ");
-    Serial.print(currentLSB * 1000000, 3);
-    Serial.println(" uA/bit");
-}
-
-// 读取总线电压 (V)
-float readBusVoltage() {
-    uint16_t value = readRegister(BUS_VOLT_REG);
-    return value * 0.00125; // LSB = 1.25mV
-}
-
-// 读取分流电压 (V)
-float readShuntVoltage() {
-    int16_t value = readRegister(SHUNT_VOLT_REG);
-    return value * 0.0000025; // LSB = 2.5uV
-}
-
-// 读取电流 (A)
-float readCurrent() {
-    int16_t value = readRegister(CURRENT_REG);
-    return value * currentLSB;
-}
-
-// 读取功率 (W)
-float readPower() {
-    uint16_t value = readRegister(POWER_REG);
-    return value * powerLSB;
-}
-
-// 写入寄存器
-void writeRegister(uint8_t reg, uint16_t value) {
-    Wire.beginTransmission(INA226_ADDR);
-    Wire.write(reg);
-    Wire.write((value >> 8) & 0xFF);  // 高字节
-    Wire.write(value & 0xFF);         // 低字节
-    Wire.endTransmission();
-}
-
-// 读取寄存器
-uint16_t readRegister(uint8_t reg) {
-    Wire.beginTransmission(INA226_ADDR);
-    Wire.write(reg);
-    Wire.endTransmission();
-    
-    Wire.requestFrom(INA226_ADDR, 2);
-    uint16_t value = Wire.read() << 8;  // 高字节
-    value |= Wire.read();               // 低字节
-    return value;
 }
