@@ -4,6 +4,32 @@
 #include <math.h>
 #include <WiFi.h>
 
+#define EN 10
+// INA226相关定义
+#define INA226_ADDR 0x40
+
+// INA226寄存器地址
+#define CONFIG_REG      0x00  // 配置寄存器
+#define SHUNT_VOLT_REG  0x01  // 分流电压寄存器
+#define BUS_VOLT_REG    0x02  // 总线电压寄存器
+#define POWER_REG       0x03  // 功率寄存器
+#define CURRENT_REG     0x04  // 电流寄存器
+#define CALIB_REG       0x05  // 校准寄存器
+
+// INA226全局变量
+float shuntResistor = 0.005; // 分流电阻值，单位：欧姆（5毫欧）
+float currentLSB;            // 电流LSB值
+float powerLSB;              // 功率LSB值
+
+// INA226函数声明
+void initINA226();
+float readBusVoltage();
+float readShuntVoltage();
+float readCurrent();
+float readPower();
+void writeRegister(uint8_t reg, uint16_t value);
+uint16_t readRegister(uint8_t reg);
+
 // OLED显示器类
 class OLEDDisplay {
 private:
@@ -229,25 +255,112 @@ void displayTask(void *parameter) {
   }
 }
 
-// 模拟数据生成类
-class SimulatedData {
+// 全局变量
+String deviceID = "A01";  // 默认设备ID
+const char* ssid = "CMCC-JM3A";  // 默认WiFi SSID
+const char* password = "18771407258";  // 默认WiFi密码
+bool enState = false;  // EN引脚状态
+
+
+
+// 处理用户命令
+void processCommand(const String& command) {
+    if (command.startsWith("en:")) {
+        String value = command.substring(3);
+        value.trim();
+        
+        if (value == "on") {
+            enState = true;
+            digitalWrite(EN, HIGH);
+            Serial.println("EN引脚已打开");
+        } else if (value == "off") {
+            enState = false;
+            digitalWrite(EN, LOW);
+            Serial.println("EN引脚已关闭");
+        } else {
+            Serial.println("无效的EN命令，使用 on 或 off");
+        }
+    }
+    else if (command.startsWith("id:")) {
+        String newID = command.substring(3);
+        newID.trim();
+        
+        if (newID.length() > 0) {
+            deviceID = newID;
+            Serial.print("设备ID已更新为: ");
+            Serial.println(deviceID);
+        } else {
+            Serial.println("无效的ID");
+        }
+    }
+    else if (command.startsWith("wifi:")) {
+        String wifiConfig = command.substring(5);
+        int commaPos = wifiConfig.indexOf(',');
+        
+        if (commaPos > 0) {
+            String newSSID = wifiConfig.substring(0, commaPos);
+            String newPassword = wifiConfig.substring(commaPos + 1);
+            
+            newSSID.trim();
+            newPassword.trim();
+            
+            if (newSSID.length() > 0 && newPassword.length() > 0) {
+                // 更新WiFi设置
+                ssid = strdup(newSSID.c_str());
+                password = strdup(newPassword.c_str());
+                
+                Serial.println("WiFi设置已更新，重新连接中...");
+                WiFi.disconnect();
+                WiFi.begin(ssid, password);
+            } else {
+                Serial.println("无效的WiFi设置");
+            }
+        } else {
+            Serial.println("无效的WiFi命令格式，使用 wifi:ssid,password");
+        }
+    }
+    else if (command == "status") {
+        Serial.println("当前状态:");
+        Serial.print("  设备ID: ");
+        Serial.println(deviceID);
+        Serial.print("  WiFi SSID: ");
+        Serial.println(ssid);
+        Serial.print("  EN状态: ");
+        Serial.println(enState ? "ON" : "OFF");
+        Serial.print("  WiFi状态: ");
+        Serial.println(WiFi.status() == WL_CONNECTED ? "已连接" : "未连接");
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.print("  IP地址: ");
+            Serial.println(WiFi.localIP().toString());
+        }
+        Serial.print("  电压: ");
+        Serial.print(readBusVoltage(), 2);
+        Serial.println(" V");
+        Serial.print("  电流: ");
+        Serial.print(readCurrent(), 3);
+        Serial.println(" A");
+        Serial.print("  功率: ");
+        Serial.print(readPower(), 2);
+        Serial.println(" W");
+        Serial.print("  温度: ");
+        Serial.print(temperatureRead(), 1);
+        Serial.println(" °C");
+    }
+    else {
+        Serial.println("未知命令");
+    }
+}
+
+// 修改BatteryMonitor类以使用全局deviceID
+class BatteryMonitor {
 private:
-    float time = 0.0;
-    const float PI2 = 2.0 * PI;
     String currentIP = "0.0.0.0";
     bool isWiFiConnected = false;
     
-    // 在指定范围内生成正弦波形数据
-    float generateSineWave(float min, float max, float frequency, float phase = 0.0) {
-        float middle = (max + min) / 2.0;
-        float amplitude = (max - min) / 2.0;
-        return middle + amplitude * sin(PI2 * frequency * time + phase);
-    }
-
     // 获取芯片温度
     float getChipTemperature() {
-        // 模拟读取ESP32内部温度传感器
-        return random(20 , 120);
+        // 实际读取ESP32内部温度传感器
+        return temperatureRead();
     }
 
 public:
@@ -258,7 +371,7 @@ public:
         String deviceID;
         String deviceIP;
         bool wifiConnected;
-        int temperature;  // 添加温度字段
+        int temperature;
     };
 
     // 更新WiFi状态和IP
@@ -269,60 +382,82 @@ public:
         }
     }
 
-    // 获取模拟数据
+    // 获取实际数据
     SensorData getData() {
         SensorData data;
         
-        // 先确定电池节数（1-4S循环变化）
-        int cells = ((int)(time * 0.1) % 4) + 1;
+        // 从INA226读取实际电压和电流
+        data.voltage = readBusVoltage();
+        data.current = readCurrent();
         
-        // 根据电池节数设置电压范围
-        float nominalVoltage, maxVoltage;
-        switch(cells) {
-            case 1:
-                nominalVoltage = 3.7f; maxVoltage = 4.2f;
-                break;
-            case 2:
-                nominalVoltage = 7.4f; maxVoltage = 8.4f;
-                break;
-            case 3:
-                nominalVoltage = 11.1f; maxVoltage = 12.6f;
-                break;
-            case 4:
-                nominalVoltage = 14.8f; maxVoltage = 16.8f;
-                break;
+        // 根据电压自动判断电池节数
+        if (data.voltage < 4.5) {
+            data.cells = 1;  // 1S
+        } else if (data.voltage < 9.0) {
+            data.cells = 2;  // 2S
+        } else if (data.voltage < 13.0) {
+            data.cells = 3;  // 3S
+        } else {
+            data.cells = 4;  // 4S
         }
         
-        // 生成对应范围的电压值（在标称电压附近波动）
-        data.voltage = generateSineWave(
-            nominalVoltage - 0.5f,  // 最低电压比标称电压低0.5V
-            maxVoltage,             // 最高电压为充满电压
-            0.02
-        );
-        data.cells = cells;
-        
-        // 电流保持不变
-        data.current = generateSineWave(0.0, 6.0, 0.05, PI/4);
-        
-        data.deviceID = "A01";
+        // 使用全局deviceID
+        data.deviceID = deviceID;
         data.deviceIP = currentIP;
         data.wifiConnected = isWiFiConnected;
 
         // 添加温度数据
         data.temperature = getChipTemperature();
 
-        time += 0.1;
         return data;
     }
 };
 
 // 创建全局实例
-SimulatedData simulator;
+BatteryMonitor batteryMonitor;
+
+// 用户控制任务
+void userControlTask(void *parameter) {
+    String inputBuffer = "";
+    
+    Serial.println("用户控制任务启动");
+    Serial.println("可用命令:");
+    Serial.println("  en:on - 打开EN引脚");
+    Serial.println("  en:off - 关闭EN引脚");
+    Serial.println("  id:xxx - 设置设备ID为xxx");
+    Serial.println("  wifi:ssid,password - 设置WiFi");
+    Serial.println("  status - 显示当前状态");
+    
+    pinMode(EN, OUTPUT);
+    digitalWrite(EN, enState ? HIGH : LOW);
+    
+    while (1) {
+        if (Serial.available()) {
+            char c = Serial.read();
+            
+            // 回显字符
+            if (c >= 32 && c <= 126) {  // 可打印字符
+                Serial.print(c);
+            }
+            
+            if (c == '\n' || c == '\r') {
+                if (inputBuffer.length() > 0) {
+                    Serial.println();
+                    processCommand(inputBuffer);
+                    inputBuffer = "";
+                }
+            } else {
+                inputBuffer += c;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));  // 短暂延时避免占用过多CPU
+    }
+}
 
 // 修改数据更新任务
 void updateTask(void *parameter) {
     while (1) {
-        SimulatedData::SensorData data = simulator.getData();
+        BatteryMonitor::SensorData data = batteryMonitor.getData();
         
         display.updateData(
             data.voltage,
@@ -331,25 +466,23 @@ void updateTask(void *parameter) {
             data.deviceID,
             data.deviceIP,
             data.wifiConnected,
-            data.temperature    // 添加温度数据
+            data.temperature
         );
         
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
-// WiFi配置
-const char* ssid = "CMCC-JM3A";
-const char* password = "18771407258";
+
 
 // WiFi事件处理
 void WiFiEvent(WiFiEvent_t event) {
     switch(event) {
         case SYSTEM_EVENT_STA_GOT_IP:
-            simulator.updateWiFiStatus(true, WiFi.localIP().toString());
+            batteryMonitor.updateWiFiStatus(true, WiFi.localIP().toString());
             break;
         case SYSTEM_EVENT_STA_DISCONNECTED:
-            simulator.updateWiFiStatus(false, "Disconnected");
+            batteryMonitor.updateWiFiStatus(false, "Disconnected");
             WiFi.reconnect();
             break;
         case SYSTEM_EVENT_STA_START:
@@ -376,19 +509,40 @@ void wifiTask(void *parameter) {
         if (WiFi.status() != WL_CONNECTED) {
             // 如果断开连接，尝试重连
             WiFi.reconnect();
-            simulator.updateWiFiStatus(false, "Connecting...");
+            batteryMonitor.updateWiFiStatus(false, "Connecting...");
         } else {
             // 确保IP地址始终是最新的
-            simulator.updateWiFiStatus(true, WiFi.localIP().toString());
+            batteryMonitor.updateWiFiStatus(true, WiFi.localIP().toString());
         }
         vTaskDelay(pdMS_TO_TICKS(5000));  // 每5秒检查一次连接状态
     }
 }
 
 void setup() {
+    Serial.begin(115200);
+    
+    // 初始化EN引脚
+    pinMode(EN, OUTPUT);
+    digitalWrite(EN, enState ? HIGH : LOW);
+    
+    // 初始化INA226
+    initINA226();
+    
     if (!display.begin()) {
+        Serial.println("OLED初始化失败!");
         while (1);  // 如果OLED初始化失败，停止运行
     }
+
+    // 创建用户控制任务 - 在核心0上运行
+    xTaskCreatePinnedToCore(
+        userControlTask,
+        "UserControlTask",
+        4096,
+        NULL,
+        1,
+        NULL,
+        0           // 在核心0上运行
+    );
 
     // 创建WiFi任务 - 在核心0上运行
     xTaskCreatePinnedToCore(
@@ -427,4 +581,82 @@ void setup() {
 void loop() {
   // 在FreeRTOS中，loop()可以为空
   vTaskDelete(NULL);  // 删除setup/loop任务
+}
+
+// INA226函数实现
+void initINA226() {
+    // 设置校准值
+    // 最大预期电流，设置为6A
+    float maxExpectedCurrent = 6.0;
+    
+    // 计算电流LSB (最大电流/2^15)
+    currentLSB = maxExpectedCurrent / 32768;
+    
+    // 计算功率LSB (25倍电流LSB)
+    powerLSB = currentLSB * 25;
+    
+    // 计算校准寄存器值
+    uint16_t calibrationValue = (uint16_t)((0.00512) / (currentLSB * shuntResistor));
+    
+    // 写入校准值
+    writeRegister(CALIB_REG, calibrationValue);
+    
+    // 配置INA226
+    // 设置配置寄存器：
+    // - 16次平均采样
+    // - 1.1ms转换时间
+    // - 连续测量分流和总线电压
+    uint16_t config = 0x4127;
+    writeRegister(CONFIG_REG, config);
+    
+    Serial.print("校准值: ");
+    Serial.println(calibrationValue);
+    Serial.print("电流LSB: ");
+    Serial.print(currentLSB * 1000000, 3);
+    Serial.println(" uA/bit");
+}
+
+// 读取总线电压 (V)
+float readBusVoltage() {
+    uint16_t value = readRegister(BUS_VOLT_REG);
+    return value * 0.00125; // LSB = 1.25mV
+}
+
+// 读取分流电压 (V)
+float readShuntVoltage() {
+    int16_t value = readRegister(SHUNT_VOLT_REG);
+    return value * 0.0000025; // LSB = 2.5uV
+}
+
+// 读取电流 (A)
+float readCurrent() {
+    int16_t value = readRegister(CURRENT_REG);
+    return value * currentLSB;
+}
+
+// 读取功率 (W)
+float readPower() {
+    uint16_t value = readRegister(POWER_REG);
+    return value * powerLSB;
+}
+
+// 写入寄存器
+void writeRegister(uint8_t reg, uint16_t value) {
+    Wire.beginTransmission(INA226_ADDR);
+    Wire.write(reg);
+    Wire.write((value >> 8) & 0xFF);  // 高字节
+    Wire.write(value & 0xFF);         // 低字节
+    Wire.endTransmission();
+}
+
+// 读取寄存器
+uint16_t readRegister(uint8_t reg) {
+    Wire.beginTransmission(INA226_ADDR);
+    Wire.write(reg);
+    Wire.endTransmission();
+    
+    Wire.requestFrom(INA226_ADDR, 2);
+    uint16_t value = Wire.read() << 8;  // 高字节
+    value |= Wire.read();               // 低字节
+    return value;
 }
