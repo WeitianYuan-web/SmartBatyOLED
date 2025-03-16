@@ -4,8 +4,10 @@
 #include <math.h>
 #include <WiFi.h>
 #include "INA226.h"  // 添加INA226头文件
+#include "BMI270Read.h"
+#include "KalmanFilter.h"
 
-#define EN 10
+#define EN 3 //旧EN 10
 // INA226相关定义
 #define INA226_ADDR 0x40
 
@@ -16,6 +18,13 @@
 #define POWER_REG       0x03  // 功率寄存器
 #define CURRENT_REG     0x04  // 电流寄存器
 #define CALIB_REG       0x05  // 校准寄存器
+// 定义引脚
+#define SDA_PIN 8
+#define SCL_PIN 9
+
+// 创建BMI270读取对象和卡尔曼滤波器
+BMI270Read bmi270(SDA_PIN, SCL_PIN);
+KalmanFilter kalman;
 
 // INA226全局变量
 float shuntResistor = 0.005; // 分流电阻值，单位：欧姆（5毫欧）
@@ -37,6 +46,11 @@ private:
   String deviceIP;
   bool wifiConnected;
   int chipTemperature;
+  
+  // 添加BMI270数据成员
+  float pitch;
+  float roll;
+  float yaw;
   
   // 互斥锁，用于保护显示数据
   SemaphoreHandle_t displayMutex;
@@ -253,6 +267,16 @@ public:
       if (connected) {
         deviceIP = ip;
       }
+      xSemaphoreGive(displayMutex);
+    }
+  }
+
+  // 添加更新姿态数据的方法
+  void updateAttitude(float newPitch, float newRoll, float newYaw) {
+    if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      pitch = newPitch;
+      roll = newRoll;
+      yaw = newYaw;
       xSemaphoreGive(displayMutex);
     }
   }
@@ -532,9 +556,57 @@ void wifiTask(void *parameter) {
     }
 }
 
+// 修改BMI270任务
+void bmi270Task(void *parameter) {
+    // 检查BMI270是否已经初始化成功
+    if (!bmi270.isInitialized()) {
+        Serial.println("BMI270未初始化，任务终止");
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    while (1) {
+        // 读取传感器数据
+        SensorData data = bmi270.readSensorData();
+        
+        if (data.valid) {
+            // 更新卡尔曼滤波器
+            kalman.update(data);
+            
+            // 获取估计的角度
+            float pitch = kalman.getPitch();
+            float roll = kalman.getRoll();
+            float yaw = kalman.getYaw();
+            
+            // 更新显示
+            display.updateAttitude(pitch, roll, yaw);
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(50)); // 20Hz更新率
+    }
+}
+
 void setup() {
     Serial.begin(115200);
-    Wire.begin();  // 确保I2C初始化
+    
+    // 统一初始化I2C
+    if (!Wire.begin()) {
+        Serial.println("I2C初始化失败!");
+        while (1);
+    }
+    Serial.println("I2C初始化成功");
+    
+    // 设置BMI270跳过I2C初始化
+    bmi270.skipI2CInit(true);
+    
+    // 初始化BMI270
+    if (!bmi270.begin()) {
+        Serial.println("BMI270初始化失败！请检查连接和地址。");
+    } else {
+        Serial.println("BMI270初始化成功");
+        // 初始化卡尔曼滤波器
+        kalman.begin();
+    }
     
     // 初始化EN引脚
     pinMode(EN, OUTPUT);
@@ -570,18 +642,18 @@ void setup() {
         NULL,
         1,
         NULL,
-        0           // 在核心0上运行
+        0
     );
 
     // 创建WiFi任务 - 在核心0上运行
     xTaskCreatePinnedToCore(
         wifiTask,
         "WiFiTask",
-        8192,        // 8K堆栈
+        8192,
         NULL,
         1,
         NULL,
-        0           // 在核心0上运行
+        0
     );
 
     // 创建显示任务 - 在核心0上运行
@@ -592,7 +664,7 @@ void setup() {
         NULL,
         2,
         NULL,
-        0           // 在核心0上运行
+        0
     );
 
     // 创建数据更新任务 - 在核心0上运行
@@ -603,7 +675,18 @@ void setup() {
         NULL,
         1,
         NULL,
-        0           // 在核心0上运行
+        0
+    );
+
+    // 创建BMI270数据读取任务 - 在核心0上运行
+    xTaskCreatePinnedToCore(
+        bmi270Task,
+        "BMI270Task",
+        4096,
+        NULL,
+        1,
+        NULL,
+        0
     );
 }
 
