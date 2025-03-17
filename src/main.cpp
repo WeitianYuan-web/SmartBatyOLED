@@ -31,6 +31,14 @@
 #define SDA_PIN 8
 #define SCL_PIN 9
 
+// 全局变量
+String deviceID = "A01";  // 默认设备ID
+//const char* ssid = "Xiaomi_B1F1";  // 默认WiFi SSID
+const char* ssid = "Magic5";  // 默认WiFi SSID
+const char* password = "yuqing051017";  // 默认WiFi密码
+bool  enState = true;  // EN引脚状态
+
+
 // WebSocket相关配置
 const char* wsHost = "192.168.28.44"; // WebSocket服务器地址，需要配置
 uint16_t wsPort = 8080;              // WebSocket服务器端口
@@ -43,6 +51,15 @@ bool isWsConnected = false;          // WebSocket连接状态
 bool isWsAuthenticated = false;      // WebSocket认证状态
 unsigned long lastPingTime = 0;      // 上次发送ping的时间
 const int PING_INTERVAL = 30000;     // ping发送间隔(毫秒，30秒)
+
+// 打印相关变量
+unsigned long lastDataPrintTime = 0;    // 上次打印电池数据的时间
+unsigned long lastCommandPrintTime = 0; // 上次打印命令列表的时间
+const int DATA_PRINT_INTERVAL = 10000;  // 打印数据间隔(毫秒，10秒)
+const int COMMAND_PRINT_INTERVAL = 10000; // 打印命令间隔(毫秒，10秒)
+bool firstDataSent = true;              // 首次发送数据标志
+char printBuffer[30] = {0};             // 打印缓冲区
+int printCounter = 0;                   // 打印计数器
 
 // 电源命令管理变量
 bool hasPendingPowerCommand = false;  // 是否有未处理的电源命令
@@ -57,6 +74,7 @@ void sendAuthRequest();
 void sendBatteryData();
 void sendPowerStateResponse(bool powerState);
 String getISOTimestamp();
+void printCommandList();  // 新增函数声明
 
 // 创建BMI270读取对象和卡尔曼滤波器
 #if ENABLE_BMI270
@@ -233,11 +251,8 @@ public:
       // 绘制边框
       u8g2.drawFrame(0, 0, 128, 32);
       u8g2.drawHLine(0, 19, 128);
-      u8g2.drawVLine(50, 0, 19);  // 第一个分隔线
-      u8g2.drawVLine(85, 0, 19);  // 第二个分隔线
-      u8g2.drawVLine(103, 19, 13);  // 第二个分隔线
-
-      // 左侧电压显示
+      
+      // 左侧电压显示 - 无论EN状态如何都显示
       drawBattery(2, 2, batteryVoltage, batteryCells);
       u8g2.setFont(u8g2_font_7x13B_tr);
       u8g2.setCursor(15, 14);
@@ -246,41 +261,54 @@ public:
       u8g2.setCursor(44, 14);
       u8g2.print("V");
 
-      // 中间功率显示
-      u8g2.setFont(u8g2_font_6x10_tf);  // 使用更小的字体显示功率
-      u8g2.setCursor(52, 14);
-      // 当功率小于0.1时显示0
-      float displayPower = (batteryPower < 0.1) ? 0.0 : batteryPower;
-      u8g2.print(displayPower, 1);
-      u8g2.setFont(u8g2_font_5x7_tf);
-      u8g2.setCursor(78, 14);
-      u8g2.print("W");
+      if (enState) {
+        // 正常显示（EN开启状态）
+        u8g2.drawVLine(50, 0, 19);  // 第一个分隔线
+        u8g2.drawVLine(85, 0, 19);  // 第二个分隔线
+        u8g2.drawVLine(103, 19, 13);  // 底部分隔线
+        
+        // 中间功率显示
+        u8g2.setFont(u8g2_font_6x10_tf);  // 使用更小的字体显示功率
+        u8g2.setCursor(52, 14);
+        // 当功率小于0.1时显示0
+        float displayPower = (batteryPower < 0.1) ? 0.0 : batteryPower;
+        u8g2.print(displayPower, 1);
+        u8g2.setFont(u8g2_font_5x7_tf);
+        u8g2.setCursor(78, 14);
+        u8g2.print("W");
 
-      // 右侧电流显示
-      drawLightning(87, 6);
-      u8g2.setFont(u8g2_font_7x13B_tr);
-      u8g2.setCursor(95, 14);  // 右移电流显示位置
-      
-      // 当电流绝对值小于0.1时显示0
-      float displayCurrent = (abs(current) < 0.1) ? 0.0 : current;
-      
-      // 根据电流大小调整显示格式
-      if (abs(displayCurrent) < 1.0 ) {
-        // 小于1A时，显示为".XX"格式
-        char currentStr[10];
-        int decimalPart = abs(displayCurrent) * 100;
-        sprintf(currentStr, ".%02d", decimalPart);
-        u8g2.print(currentStr);
+        // 右侧电流显示
+        drawLightning(87, 6);
+        u8g2.setFont(u8g2_font_7x13B_tr);
+        u8g2.setCursor(95, 14);  // 右移电流显示位置
+        
+        // 当电流绝对值小于0.1时显示0
+        float displayCurrent = (abs(current) < 0.1) ? 0.0 : current;
+        
+        // 根据电流大小调整显示格式
+        if (abs(displayCurrent) < 1.0 ) {
+          // 小于1A时，显示为".XX"格式
+          char currentStr[10];
+          int decimalPart = abs(displayCurrent) * 100;
+          sprintf(currentStr, ".%02d", decimalPart);
+          u8g2.print(currentStr);
+        } else {
+          // 大于等于1A或等于0时，正常显示
+          u8g2.print(displayCurrent, 1);
+        }
+        
+        u8g2.setFont(u8g2_font_5x7_tf);
+        u8g2.setCursor(121, 14);
+        u8g2.print("A");
       } else {
-        // 大于等于1A或等于0时，正常显示
-        u8g2.print(displayCurrent, 1);
+        // 特殊显示（EN关闭状态）
+        // 用一个明显的标识表示电源已关闭
+        u8g2.setFont(u8g2_font_7x13B_tr);
+        u8g2.setCursor(58, 14);
+        u8g2.print("5VEN:OFF");
       }
-      
-      u8g2.setFont(u8g2_font_5x7_tf);
-      u8g2.setCursor(121, 14);
-      u8g2.print("A");
 
-      // 底部信息
+      // 底部信息 - 无论EN状态如何都显示
       u8g2.setFont(u8g2_font_5x8_tf);
       drawWiFi(4, 28);
       u8g2.setCursor(12, 30);
@@ -289,7 +317,6 @@ public:
       u8g2.print(deviceIP);
       
       // 在底部信息区域添加温度显示
-      //drawTemperature(90, 22);
       u8g2.setFont(u8g2_font_5x8_tf);
       u8g2.setCursor(105, 30);
       u8g2.print(chipTemperature, 1);
@@ -335,12 +362,6 @@ void displayTask(void *parameter) {
   }
 }
 
-// 全局变量
-String deviceID = "A01";  // 默认设备ID
-//const char* ssid = "Xiaomi_B1F1";  // 默认WiFi SSID
-const char* ssid = "Magic5";  // 默认WiFi SSID
-const char* password = "yuqing051017";  // 默认WiFi密码
-bool  enState = true;  // EN引脚状态
 
 // 处理用户命令
 void processCommand(const String& command) {
@@ -350,12 +371,10 @@ void processCommand(const String& command) {
         
         if (value == "on") {
             enState = true;
-            digitalWrite(EN_GPIO_NUM, HIGH);
-            Serial.println("EN引脚已打开");
+            Serial.println("EN状态已设为开启");
         } else if (value == "off") {
             enState = false;
-            digitalWrite(EN_GPIO_NUM, LOW);
-            Serial.println("EN引脚已关闭");
+            Serial.println("EN状态已设为关闭");
         } else {
             Serial.println("无效的EN命令，使用 on 或 off");
         }
@@ -587,16 +606,15 @@ void handlePowerCommand(bool powerState) {
     Serial.print("处理电源控制命令: ");
     Serial.println(powerState ? "开启" : "关闭");
     
-    // 更新电源状态
+    // 只更新电源状态标志位，不直接控制引脚
     enState = powerState;
-    digitalWrite(EN_GPIO_NUM, powerState ? HIGH : LOW);
     
     // 发送状态响应
     sendPowerStateResponse(true);
     
     // 打印调试信息
-    Serial.print("EN引脚实际状态: ");
-    Serial.println(digitalRead(EN_GPIO_NUM));
+    Serial.print("EN状态: ");
+    Serial.println(enState ? "开启" : "关闭");
 }
 
 // WebSocket事件处理函数
@@ -783,7 +801,6 @@ void sendBatteryData() {
     doc["power_state"] = enState;  // 使用保存的状态变量，而不是直接读取引脚
 
     // 删除多余的字段，确保与模拟器格式一致
-    // doc["battery_id"] = BATTERY_ID;  // 与terminal_id重复，移除
     doc["rssi"] = WiFi.RSSI();       // 保留信号强度作为额外信息
     
     // 序列化JSON
@@ -792,7 +809,40 @@ void sendBatteryData() {
     
     // 发送数据
     webSocket.sendTXT(jsonStr);
-    Serial.println("已发送电池数据");
+    
+    // 优化打印输出
+    unsigned long currentTime = millis();
+    if (firstDataSent) {
+        Serial.print("已发送电池数据 ");
+        firstDataSent = false;
+    }
+    
+    // 更新打印计数器和缓冲区
+    printCounter = (printCounter + 1) % 4;
+    switch (printCounter) {
+        case 0: strcpy(printBuffer, "\\"); break;
+        case 1: strcpy(printBuffer, "|"); break;
+        case 2: strcpy(printBuffer, "/"); break;
+        case 3: strcpy(printBuffer, "-"); break;
+    }
+    Serial.print(printBuffer);
+    Serial.print("\b"); // 回退一格
+    
+    // 每隔指定时间完整打印一次数据
+    if (currentTime - lastDataPrintTime >= DATA_PRINT_INTERVAL) {
+        Serial.println(); // 换行
+        Serial.println("电池数据详情: ");
+        Serial.print("  电压: "); Serial.print(data.voltage); Serial.println("V");
+        Serial.print("  电流: "); Serial.print(data.current); Serial.println("A");
+        Serial.print("  功率: "); Serial.print(data.power); Serial.println("W");
+        Serial.print("  温度: "); Serial.print(data.temperature); Serial.println("°C");
+        Serial.print("  电源状态: "); Serial.println(enState ? "开启" : "关闭");
+        Serial.println("已发送电池数据");
+        
+        // 重置首次发送标志，这样下一个10秒周期会重新开始动画
+        firstDataSent = true;
+        lastDataPrintTime = currentTime;
+    }
 }
 
 // 增强电源状态响应
@@ -814,7 +864,7 @@ void sendPowerStateResponse(bool powerState) {
     
     // 添加额外的有用信息，但格式更简洁
     doc["message"] = powerState ? "Power on success" : "Power off success";
-    doc["actual_state"] = digitalRead(EN_GPIO_NUM);  // 实际状态可能更有用
+    doc["actual_state"] = enState;  // 使用状态变量而不是读取引脚
     
     // 序列化JSON
     String jsonStr;
@@ -849,7 +899,10 @@ void sendPing() {
     
     // 发送ping
     webSocket.sendTXT(jsonStr);
-    Serial.println("已发送ping");
+    
+    // 简化打印
+    Serial.print("PING: ");
+    Serial.println(doc["timestamp"].as<String>());
 }
 
 // WebSocket连接任务
@@ -868,6 +921,11 @@ void wsClientTask(void *parameter) {
         // 定时发送电池数据
         if(isWsConnected && isWsAuthenticated && 
            (currentTime - lastWsSendTime >= WS_SEND_INTERVAL)) {
+            // 如果间隔超过数据打印间隔，重置首次发送标志
+            if(currentTime - lastDataPrintTime >= DATA_PRINT_INTERVAL) {
+                firstDataSent = true;
+            }
+            
             sendBatteryData();
             lastWsSendTime = currentTime;
         }
@@ -887,22 +945,20 @@ void wsClientTask(void *parameter) {
 void userControlTask(void *parameter) {
     String inputBuffer = "";
     
+    // 初始打印命令列表
     Serial.println("用户控制任务启动");
-    Serial.println("可用命令:");
-    Serial.println("  en:on - 打开EN引脚");
-    Serial.println("  en:off - 关闭EN引脚");
-    Serial.println("  id:xxx - 设置设备ID为xxx");
-    Serial.println("  wifi:ssid,password - 设置WiFi");
-    Serial.println("  ws:host:port - 设置WebSocket服务器");
-    Serial.println("  wskey:apikey - 设置WebSocket API密钥");
-    Serial.println("  battery_id:xxx - 设置电池ID为xxx");
-    Serial.println("  status - 显示当前状态");
+    printCommandList();
+    lastCommandPrintTime = millis();
     
-    pinMode(EN_GPIO_NUM, OUTPUT);
-    digitalWrite(EN_GPIO_NUM, enState ? HIGH : LOW);
-    
-
     while (1) {
+        unsigned long currentTime = millis();
+        
+        // 每隔指定时间打印一次命令列表
+        if (currentTime - lastCommandPrintTime >= COMMAND_PRINT_INTERVAL) {
+            printCommandList();
+            lastCommandPrintTime = currentTime;
+        }
+        
         if (Serial.available()) {
             char c = Serial.read();
             
@@ -925,9 +981,25 @@ void userControlTask(void *parameter) {
     }
 }
 
+// 打印命令列表的辅助函数
+void printCommandList() {
+    Serial.println("\n可用命令:");
+    Serial.println("  en:on - 打开EN引脚");
+    Serial.println("  en:off - 关闭EN引脚");
+    Serial.println("  id:xxx - 设置设备ID为xxx");
+    Serial.println("  wifi:ssid,password - 设置WiFi");
+    Serial.println("  ws:host:port - 设置WebSocket服务器");
+    Serial.println("  wskey:apikey - 设置WebSocket API密钥");
+    Serial.println("  battery_id:xxx - 设置电池ID为xxx");
+    Serial.println("  status - 显示当前状态");
+}
+
 // 修改数据更新任务
 void updateTask(void *parameter) {
     while (1) {
+        // 控制EN引脚
+        digitalWrite(EN_GPIO_NUM, enState ? HIGH : LOW);
+        
         BatteryMonitor::SensorData data = batteryMonitor.getData();
         
         display.updateData(
