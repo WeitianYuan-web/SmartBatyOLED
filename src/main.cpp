@@ -32,7 +32,7 @@
 #define SCL_PIN 9
 
 // WebSocket相关配置
-const char* wsHost = "192.168.31.128"; // WebSocket服务器地址，需要配置
+const char* wsHost = "192.168.28.44"; // WebSocket服务器地址，需要配置
 uint16_t wsPort = 8080;              // WebSocket服务器端口
 const char* wsPath = "/";            // WebSocket路径
 const char* API_KEY = "sensor_device_key_123"; // 认证密钥
@@ -43,6 +43,11 @@ bool isWsConnected = false;          // WebSocket连接状态
 bool isWsAuthenticated = false;      // WebSocket认证状态
 unsigned long lastPingTime = 0;      // 上次发送ping的时间
 const int PING_INTERVAL = 30000;     // ping发送间隔(毫秒，30秒)
+
+// 电源命令管理变量
+bool hasPendingPowerCommand = false;  // 是否有未处理的电源命令
+bool pendingPowerState = false;       // 未处理的电源状态
+unsigned long powerCommandTime = 0;   // 计划执行时间
 
 // 创建WebSocket客户端
 WebSocketsClient webSocket;
@@ -332,9 +337,10 @@ void displayTask(void *parameter) {
 
 // 全局变量
 String deviceID = "A01";  // 默认设备ID
-const char* ssid = "Xiaomi_B1F1";  // 默认WiFi SSID
-const char* password = "Ywt6837057";  // 默认WiFi密码
-bool                                                                                                                                                                                                                                                 enState = true;  // EN引脚状态
+//const char* ssid = "Xiaomi_B1F1";  // 默认WiFi SSID
+const char* ssid = "Magic5";  // 默认WiFi SSID
+const char* password = "yuqing051017";  // 默认WiFi密码
+bool  enState = true;  // EN引脚状态
 
 // 处理用户命令
 void processCommand(const String& command) {
@@ -576,6 +582,23 @@ public:
 // 创建全局实例
 BatteryMonitor batteryMonitor;
 
+// 处理电源控制命令
+void handlePowerCommand(bool powerState) {
+    Serial.print("处理电源控制命令: ");
+    Serial.println(powerState ? "开启" : "关闭");
+    
+    // 更新电源状态
+    enState = powerState;
+    digitalWrite(EN_GPIO_NUM, powerState ? HIGH : LOW);
+    
+    // 发送状态响应
+    sendPowerStateResponse(true);
+    
+    // 打印调试信息
+    Serial.print("EN引脚实际状态: ");
+    Serial.println(digitalRead(EN_GPIO_NUM));
+}
+
 // WebSocket事件处理函数
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
     switch(type) {
@@ -623,31 +646,31 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                 
                 // 增强的电源命令处理
                 else if(doc.containsKey("type") && doc["type"] == "power_command") {
-                    if(doc.containsKey("power_state") && doc.containsKey("terminal_id")) {
-                        String targetId = doc["terminal_id"].as<String>();
-                        Serial.print("目标设备ID: ");
-                        Serial.println(targetId);
-                        Serial.print("当前设备ID: ");
-                        Serial.println(BATTERY_ID);
+                    // 首先检查是否有电源状态字段
+                    if(doc.containsKey("power_state")) {
+                        bool powerState = doc["power_state"].as<bool>();
                         
-                        if(targetId.equals(BATTERY_ID)) {
-                            bool powerState = doc["power_state"].as<bool>();
-                            Serial.print("收到有效电源控制命令: ");
-                            Serial.println(powerState ? "开启" : "关闭");
+                        // 检查是否有终端ID字段
+                        if(doc.containsKey("terminal_id")) {
+                            String targetId = doc["terminal_id"].as<String>();
+                            Serial.print("目标设备ID: ");
+                            Serial.println(targetId);
+                            Serial.print("当前设备ID: ");
+                            Serial.println(BATTERY_ID);
                             
-                            // 原子操作更新状态
-                            enState = powerState;
-                            digitalWrite(EN_GPIO_NUM, powerState ? HIGH : LOW);
-                            
-                            // 立即发送状态响应
-                            sendPowerStateResponse(powerState);
-                            
-                            // 打印调试信息
-                            Serial.print("EN引脚实际状态: ");
-                            Serial.println(digitalRead(EN_GPIO_NUM));
+                            // 如果ID匹配才处理
+                            if(targetId.equals(BATTERY_ID)) {
+                                handlePowerCommand(powerState);
+                            } else {
+                                Serial.println("终端ID不匹配，忽略命令");
+                            }
                         } else {
-                            Serial.println("终端ID不匹配，忽略命令");
+                            // 没有终端ID，直接处理命令
+                            Serial.println("收到无终端ID的电源命令，默认处理");
+                            handlePowerCommand(powerState);
                         }
+                    } else {
+                        Serial.println("电源命令缺少power_state字段");
                     }
                 }
                 
@@ -696,7 +719,7 @@ void sendAuthRequest() {
     
     // 添加设备信息
     JsonObject deviceInfo = doc.createNestedObject("deviceInfo");
-    deviceInfo["type"] = "battery";
+    deviceInfo["deviceType"] = "battery";
     deviceInfo["version"] = "1.0.0";
     deviceInfo["manufacturer"] = "SmartBattery";
     
@@ -755,13 +778,13 @@ void sendBatteryData() {
     }
     doc["battery_percent"] = batteryPercent;
     doc["power"] = data.power;      // 直接使用浮点数
-    doc["temperature"] = data.temperature;
+    doc["temperature"] = data.temperature;  // 直接使用浮点数
     doc["is_charging"] = data.current > 0;
-    doc["power_state"] = digitalRead(EN_GPIO_NUM);
+    doc["power_state"] = enState;  // 使用保存的状态变量，而不是直接读取引脚
 
-    // 添加服务器需要的额外字段
-    doc["battery_id"] = BATTERY_ID;  // 与模拟器保持一致
-    doc["rssi"] = WiFi.RSSI();       // 添加信号强度
+    // 删除多余的字段，确保与模拟器格式一致
+    // doc["battery_id"] = BATTERY_ID;  // 与terminal_id重复，移除
+    doc["rssi"] = WiFi.RSSI();       // 保留信号强度作为额外信息
     
     // 序列化JSON
     String jsonStr;
@@ -782,18 +805,16 @@ void sendPowerStateResponse(bool powerState) {
     // 创建JSON对象
     DynamicJsonDocument doc(1024);
     
+    // 简化响应结构，与模拟器保持一致
     doc["type"] = "power_state_response";
     doc["terminal_id"] = BATTERY_ID;
     doc["power_state"] = powerState;
     doc["success"] = true;
     doc["timestamp"] = getISOTimestamp();
-    doc["terminal_id"] = BATTERY_ID;
-    doc["actual_state"] = digitalRead(EN_GPIO_NUM);
-    doc["requested_state"] = powerState;
-    doc["voltage"] = ina226.readBusVoltage();
-    doc["current"] = ina226.readCurrent();
+    
+    // 添加额外的有用信息，但格式更简洁
     doc["message"] = powerState ? "Power on success" : "Power off success";
-    doc["code"] = 200;
+    doc["actual_state"] = digitalRead(EN_GPIO_NUM);  // 实际状态可能更有用
     
     // 序列化JSON
     String jsonStr;
@@ -803,13 +824,6 @@ void sendPowerStateResponse(bool powerState) {
     webSocket.sendTXT(jsonStr);
     Serial.print("已发送电源状态响应: ");
     Serial.println(powerState ? "开启" : "关闭");
-    
-    // 添加详细响应信息
-    doc["terminal_id"] = BATTERY_ID;
-    doc["actual_state"] = digitalRead(EN_GPIO_NUM);
-    doc["requested_state"] = powerState;
-    doc["voltage"] = ina226.readBusVoltage();
-    doc["current"] = ina226.readCurrent();
     
     // 打印调试信息
     Serial.print("发送电源响应：");
