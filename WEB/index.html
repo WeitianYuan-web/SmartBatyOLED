@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="实时传感器数据监控系统">
+    <title>传感器数据监控系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>智能传感器监控平台</h1>
+        
+        <!-- 状态面板 -->
+        <div class="data-card">
+            <div class="data-card-header">
+                <h2>系统状态</h2>
+                <span id="system-time"></span>
+            </div>
+            <div class="data-card-body">
+                <div class="status-panel">
+                    <div class="status-item">
+                        <span class="status-label">连接状态</span>
+                        <span id="connection-status" class="status-value">未连接</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">设备IP</span>
+                        <span id="device-ip" class="status-value">--</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">最后更新</span>
+                        <span id="last-update" class="status-value">--</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">数据周期</span>
+                        <span id="update-interval" class="status-value">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 电池终端容器 -->
+        <div id="battery-terminals-container">
+            <!-- 电池终端将被动态添加到这里 -->
+            <div class="data-card battery-header-card">
+                <div class="data-card-header">
+                    <h2>智能电池终端</h2>
+                    <span><span id="battery-count">0</span> 个终端已连接</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 传感器数据 -->
+        <div id="sensor-data" class="data-card">
+            <div class="data-card-header">
+                <h2>环境传感器数据</h2>
+                <div class="visualization-controls">
+                    <label for="gyro-data-source">数据源: </label>
+                    <select id="gyro-data-source" class="gyro-select">
+                        <option value="default">默认数据源</option>
+                        <!-- 其他选项将由JavaScript动态添加 -->
+                    </select>
+                </div>
+            </div>
+            <div class="data-card-body" id="sensor-data-content">
+                <!-- 动态内容将通过JavaScript注入 -->
+            </div>
+        </div>
+
+        <!-- 3D可视化容器 -->
+        <div class="visualization-panel">
+            <div class="data-card-header">
+                <h2>姿态可视化</h2>
+            </div>
+            <div id="cube-container"></div>
+        </div>
+
+        <!-- 错误日志面板 -->
+        <div class="log-panel">
+            <div class="data-card-header">
+                <h2>系统日志</h2>
+                <button id="clear-log" class="btn">清除日志</button>
+            </div>
+            <div id="error-log"></div>
+        </div>
+    </div>
+
+    <!-- 电池终端模板 (用于JavaScript克隆) -->
+    <template id="battery-terminal-template">
+        <div class="data-card battery-terminal" data-terminal-id="">
+            <div class="data-card-header">
+                <div>
+                    <h2>电池终端</h2>
+                    <span class="terminal-id">ID: --</span>
+                </div>
+                <div class="terminal-controls">
+                    <span class="connection-badge">未连接</span>
+                    <button class="btn power-btn" title="开关控制" disabled>
+                        <span class="power-icon"></span>
+                    </button>
+                </div>
+            </div>
+            <div class="data-card-body">
+                <div class="status-panel battery-info">
+                    <div class="status-item">
+                        <span class="status-label">终端IP</span>
+                        <span class="battery-ip status-value">--</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">最后更新</span>
+                        <span class="battery-update status-value">--</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">电源状态</span>
+                        <span class="battery-power-state status-value">未知</span>
+                    </div>
+                </div>
+                
+                <div class="battery-data">
+                    <div class="data-section">
+                        <h3>电池参数</h3>
+                        <p><strong>电池节数</strong><span class="battery-cells value">--</span></p>
+                        <p><strong>电压</strong><span class="battery-voltage value">--</span></p>
+                        <p><strong>功率</strong><span class="battery-power value">--</span></p>
+                        <p><strong>温度</strong><span class="battery-temperature value">--</span></p>
+                    </div>
+                    
+                    <div class="battery-status-visual">
+                        <!-- 电池电量显示 -->
+                        <div class="visual-group">
+                            <span class="visual-label">电量</span>
+                            <div class="battery-icon">
+                                <div class="battery-level" style="width: 0%"></div>
+                            </div>
+                            <div class="battery-percent">0%</div>
+                        </div>
+                        
+                        <!-- 功率柱状图 -->
+                        <div class="visual-group">
+                            <span class="visual-label">功率</span>
+                            <div class="power-bar-container">
+                                <div class="power-bar" style="height: 0%"></div>
+                            </div>
+                            <div class="power-percent">0W / 30W</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <script src="cube.js"></script>
+    <script>
+        // 添加系统时间显示
+        function updateSystemTime() {
+            const now = new Date();
+            document.getElementById('system-time').textContent = now.toLocaleString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+        
+        setInterval(updateSystemTime, 1000);
+        updateSystemTime();
+        
+        // 清除日志按钮事件
+        document.getElementById('clear-log').addEventListener('click', function() {
+            document.getElementById('error-log').innerHTML = '';
+            addLogEntry('已清除日志', 'info');
+        });
+        
+        // 日志条目函数（将在script.js中被覆盖，这里只是防止初始化错误）
+        function addLogEntry(message, type) {
+            const logContainer = document.getElementById('error-log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type || 'info'}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.insertBefore(entry, logContainer.firstChild);
+        }
+    </script>
+    <script src="script.js"></script>
+</body>
+</html>

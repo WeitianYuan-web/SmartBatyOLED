@@ -6,6 +6,7 @@
 #include <WebSocketsClient.h> // 添加WebSocket客户端库
 #include <ArduinoJson.h>      // 添加JSON库
 #include "INA226.h"  // 添加INA226头文件
+#include <Preferences.h>  // 添加Preferences库用于保存配置
 
 // 添加宏定义控制BMI270功能
 #define ENABLE_BMI270 0  // 设置为1启用BMI270功能，设置为0禁用
@@ -15,7 +16,7 @@
 #include "KalmanFilter.h"
 #endif
 
-#define EN_GPIO_NUM 10 // 确认ESP32-C3的GPIO10可用
+#define EN_GPIO_NUM 10 // 旧10 新3
 
 // INA226相关定义
 #define INA226_ADDR 0x40
@@ -32,19 +33,21 @@
 #define SCL_PIN 9
 
 // 全局变量
-String deviceID = "A01";  // 默认设备ID
-//const char* ssid = "Xiaomi_B1F1";  // 默认WiFi SSID
-const char* ssid = "Magic5";  // 默认WiFi SSID
-const char* password = "yuqing051017";  // 默认WiFi密码
+String deviceID = "B01";  // 默认设备ID
+String batteryID = "smartbaty-001";  // 默认电池ID
+String wsHostStr = "192.168.31.128";  // WebSocket服务器地址，转为字符串类型
+uint16_t wsPort = 8080;              // WebSocket服务器端口
+String wsPathStr = "/";              // WebSocket路径
+String apiKeyStr = "sensor_device_key_123"; // 认证密钥
+String ssidStr = "Xiaomi_B1F1";  // 默认WiFi SSID
+String passwordStr = "Ywt6837057";  // 默认WiFi密码
 bool  enState = true;  // EN引脚状态
 
+// 创建Preferences实例
+Preferences preferences;
 
 // WebSocket相关配置
-const char* wsHost = "192.168.28.44"; // WebSocket服务器地址，需要配置
-uint16_t wsPort = 8080;              // WebSocket服务器端口
-const char* wsPath = "/";            // WebSocket路径
-const char* API_KEY = "sensor_device_key_123"; // 认证密钥
-const char* BATTERY_ID = "smartbaty-001";    // 电池ID
+// 这些变量只是字符串的临时指针，不需要全局存储
 unsigned long lastWsSendTime = 0;    // 上次发送数据的时间
 const int WS_SEND_INTERVAL = 200;   // 发送间隔(毫秒)
 bool isWsConnected = false;          // WebSocket连接状态
@@ -362,175 +365,409 @@ void displayTask(void *parameter) {
   }
 }
 
+// 修改CONFIG_HELP，添加导入导出命令
+const char* CONFIG_HELP = 
+    "配置命令格式: config:<参数>=<值>\n"
+    "可配置参数:\n"
+    "  device_id - 设备ID\n"
+    "  battery_id - 电池ID\n"
+    "  ws_host - WebSocket服务器地址\n"
+    "  ws_port - WebSocket服务器端口\n"
+    "  api_key - WebSocket认证密钥\n"
+    "  wifi_ssid - WiFi名称\n"
+    "  wifi_pass - WiFi密码\n"
+    "  en_state - 电源状态(on/off)\n"
+    "  save - 保存所有配置\n"
+    "  reset - 重置所有配置\n"
+    "  export - 导出配置为JSON\n"
+    "  import=<JSON字符串> - 导入配置\n"
+    "  status - 显示当前设置和状态\n"
+    "  help - 显示此帮助\n"
+    "示例: config:battery_id=battery-001";
 
-// 处理用户命令
+// 修改打印命令列表的辅助函数
+void printCommandList() {
+    Serial.println("\n可用命令:");
+    Serial.println("  config:<参数>=<值> - 配置系统参数 (输入config:help查看详细帮助)");
+    Serial.println("  config:status - 显示当前状态");
+    Serial.println("  en:on - 打开电源");
+    Serial.println("  en:off - 关闭电源");
+}
+
+// 在processCommand函数中添加导入导出功能
 void processCommand(const String& command) {
-    if (command.startsWith("en:")) {
+    if (command.startsWith("config:")) {
+        String configParam = command.substring(7);
+        
+        // 处理配置帮助
+        if (configParam == "help") {
+            Serial.println(CONFIG_HELP);
+            return;
+        }
+        
+        // 处理状态显示
+        if (configParam == "status") {
+            Serial.println("当前状态:");
+            Serial.print("  设备ID: ");
+            Serial.println(deviceID);
+            Serial.print("  电池ID: ");
+            Serial.println(batteryID);
+            Serial.print("  WiFi名称: ");
+            Serial.println(ssidStr);
+            Serial.print("  WiFi密码: ");
+            Serial.println("********");
+            Serial.print("  WebSocket服务器: ");
+            Serial.print(wsHostStr);
+            Serial.print(":");
+            Serial.println(wsPort);
+            Serial.print("  API密钥: ");
+            Serial.println(apiKeyStr);
+            Serial.print("  电源状态: ");
+            Serial.println(enState ? "开启" : "关闭");
+            Serial.print("  WiFi状态: ");
+            Serial.println(WiFi.status() == WL_CONNECTED ? "已连接" : "未连接");
+            if (WiFi.status() == WL_CONNECTED) {
+                Serial.print("  IP地址: ");
+                Serial.println(WiFi.localIP().toString());
+            }
+            Serial.print("  电压: ");
+            Serial.print(ina226.readBusVoltage(), 2);
+            Serial.println(" V");
+            Serial.print("  电流: ");
+            Serial.print(ina226.readCurrent(), 3);
+            Serial.println(" A");
+            Serial.print("  功率: ");
+            Serial.print(ina226.readPower(), 2);
+            Serial.println(" W");
+            Serial.print("  温度: ");
+            Serial.print(temperatureRead(), 1);
+            Serial.println(" °C");
+            
+            // 添加WebSocket状态信息
+            Serial.print("  WebSocket状态: ");
+            Serial.println(isWsConnected ? "已连接" : "未连接");
+            Serial.print("  WebSocket认证: ");
+            Serial.println(isWsAuthenticated ? "已认证" : "未认证");
+            
+            #if ENABLE_BMI270
+            Serial.println("  BMI270: 已启用");
+            #else
+            Serial.println("  BMI270: 未启用");
+            #endif
+            return;
+        }
+        
+        // 处理导出配置
+        if (configParam == "export") {
+            DynamicJsonDocument doc(1024);
+            
+            // 添加所有配置项
+            doc["device_id"] = deviceID;
+            doc["battery_id"] = batteryID;
+            doc["ws_host"] = wsHostStr;
+            doc["ws_port"] = wsPort;
+            doc["api_key"] = apiKeyStr;
+            doc["wifi_ssid"] = ssidStr;
+            doc["wifi_pass"] = passwordStr;
+            doc["en_state"] = enState;
+            
+            // 序列化JSON
+            String jsonStr;
+            serializeJson(doc, jsonStr);
+            
+            // 输出配置
+            Serial.println("导出的配置:");
+            Serial.println(jsonStr);
+            return;
+        }
+        
+        // 处理导入配置
+        if (configParam.startsWith("import=")) {
+            String jsonStr = configParam.substring(7);
+            
+            // 解析JSON
+            DynamicJsonDocument doc(1024);
+            DeserializationError error = deserializeJson(doc, jsonStr);
+            
+            if (error) {
+                Serial.print("JSON解析失败: ");
+                Serial.println(error.c_str());
+                return;
+            }
+            
+            // 导入配置项
+            bool hasChanges = false;
+            
+            if (doc.containsKey("device_id")) {
+                deviceID = doc["device_id"].as<String>();
+                preferences.putString("deviceID", deviceID);
+                hasChanges = true;
+            }
+            
+            if (doc.containsKey("battery_id")) {
+                batteryID = doc["battery_id"].as<String>();
+                preferences.putString("batteryID", batteryID);
+                hasChanges = true;
+            }
+            
+            if (doc.containsKey("ws_host")) {
+                wsHostStr = doc["ws_host"].as<String>();
+                preferences.putString("wsHost", wsHostStr);
+                hasChanges = true;
+            }
+            
+            if (doc.containsKey("ws_port")) {
+                wsPort = doc["ws_port"].as<uint16_t>();
+                preferences.putUShort("wsPort", wsPort);
+                hasChanges = true;
+            }
+            
+            if (doc.containsKey("api_key")) {
+                apiKeyStr = doc["api_key"].as<String>();
+                preferences.putString("apiKey", apiKeyStr);
+                hasChanges = true;
+            }
+            
+            if (doc.containsKey("wifi_ssid")) {
+                ssidStr = doc["wifi_ssid"].as<String>();
+                preferences.putString("wifiSsid", ssidStr);
+                hasChanges = true;
+            }
+            
+            if (doc.containsKey("wifi_pass")) {
+                passwordStr = doc["wifi_pass"].as<String>();
+                preferences.putString("wifiPass", passwordStr);
+                hasChanges = true;
+            }
+            
+            if (doc.containsKey("en_state")) {
+                enState = doc["en_state"].as<bool>();
+                preferences.putBool("enState", enState);
+                hasChanges = true;
+            }
+            
+            if (hasChanges) {
+                Serial.println("配置已导入并保存");
+                
+                // 如果WiFi设置更改，重新连接
+                if (doc.containsKey("wifi_ssid") || doc.containsKey("wifi_pass")) {
+                    Serial.println("WiFi设置已更新，重新连接中...");
+                    WiFi.disconnect();
+                    WiFi.begin(ssidStr.c_str(), passwordStr.c_str());
+                }
+                
+                // 如果WebSocket设置更改，重新连接
+                if (doc.containsKey("ws_host") || doc.containsKey("ws_port")) {
+                    Serial.println("WebSocket设置已更新，重新连接中...");
+                    webSocket.disconnect();
+                    webSocket.begin(wsHostStr.c_str(), wsPort, wsPathStr.c_str());
+                }
+                
+                // 如果认证信息更改，重新认证
+                if (doc.containsKey("api_key") || doc.containsKey("battery_id")) {
+                    isWsAuthenticated = false;
+                    if (isWsConnected) {
+                        sendAuthRequest();
+                    }
+                }
+            } else {
+                Serial.println("无有效配置项导入");
+            }
+            
+            return;
+        }
+        
+        // 查找等号分隔参数名和值
+        int equalsPos = configParam.indexOf('=');
+        if (equalsPos <= 0) {
+            Serial.println("配置格式错误，使用 config:<参数>=<值>");
+            Serial.println("输入 config:help 查看帮助");
+            return;
+        }
+        
+        String paramName = configParam.substring(0, equalsPos);
+        String paramValue = configParam.substring(equalsPos + 1);
+        
+        paramName.trim();
+        paramValue.trim();
+        
+        // 处理各种参数
+        if (paramName == "device_id") {
+            if (paramValue.length() > 0) {
+                deviceID = paramValue;
+                // 保存到preferences
+                preferences.putString("deviceID", deviceID);
+                Serial.print("设备ID已更新为: ");
+                Serial.println(deviceID);
+            } else {
+                Serial.println("无效的设备ID");
+            }
+        }
+        else if (paramName == "battery_id") {
+            if (paramValue.length() > 0) {
+                // 更新电池ID
+                batteryID = paramValue;
+                // 保存到preferences
+                preferences.putString("batteryID", batteryID);
+                
+                Serial.print("电池ID已更新为: ");
+                Serial.println(batteryID);
+                
+                // 如果已认证，需要重新认证
+                if (isWsAuthenticated) {
+                    isWsAuthenticated = false;
+                    if (isWsConnected) {
+                        sendAuthRequest();
+                    }
+                }
+            } else {
+                Serial.println("无效的电池ID");
+            }
+        }
+        else if (paramName == "ws_host") {
+            if (paramValue.length() > 0) {
+                wsHostStr = paramValue;
+                // 保存到preferences
+                preferences.putString("wsHost", wsHostStr);
+                
+                Serial.print("WebSocket服务器地址已更新为: ");
+                Serial.println(wsHostStr);
+                
+                // 重新连接WebSocket
+                webSocket.disconnect();
+                webSocket.begin(wsHostStr.c_str(), wsPort, wsPathStr.c_str());
+            } else {
+                Serial.println("无效的服务器地址");
+            }
+        }
+        else if (paramName == "ws_port") {
+            int port = paramValue.toInt();
+            if (port > 0 && port < 65536) {
+                wsPort = port;
+                // 保存到preferences
+                preferences.putUShort("wsPort", port);
+                
+                Serial.print("WebSocket服务器端口已更新为: ");
+                Serial.println(wsPort);
+                
+                // 重新连接WebSocket
+                webSocket.disconnect();
+                webSocket.begin(wsHostStr.c_str(), wsPort, wsPathStr.c_str());
+            } else {
+                Serial.println("无效的端口号");
+            }
+        }
+        else if (paramName == "api_key") {
+            if (paramValue.length() > 0) {
+                apiKeyStr = paramValue;
+                // 保存到preferences
+                preferences.putString("apiKey", apiKeyStr);
+                
+                Serial.println("WebSocket API密钥已更新，请重新连接认证");
+                isWsAuthenticated = false;
+                
+                // 如果已连接，重新发送认证请求
+                if (isWsConnected) {
+                    sendAuthRequest();
+                }
+            } else {
+                Serial.println("无效的API密钥");
+            }
+        }
+        else if (paramName == "wifi_ssid") {
+            if (paramValue.length() > 0) {
+                ssidStr = paramValue;
+                // 保存到preferences
+                preferences.putString("wifiSsid", ssidStr);
+                
+                Serial.print("WiFi名称已更新为: ");
+                Serial.println(ssidStr);
+                Serial.println("注意：需要同时设置wifi_pass才会重新连接");
+            } else {
+                Serial.println("无效的WiFi名称");
+            }
+        }
+        else if (paramName == "wifi_pass") {
+            if (paramValue.length() > 0) {
+                passwordStr = paramValue;
+                // 保存到preferences
+                preferences.putString("wifiPass", passwordStr);
+                
+                Serial.println("WiFi密码已更新");
+                
+                // 重新连接WiFi
+                Serial.println("WiFi设置已更新，重新连接中...");
+                WiFi.disconnect();
+                WiFi.begin(ssidStr.c_str(), passwordStr.c_str());
+            } else {
+                Serial.println("无效的WiFi密码");
+            }
+        }
+        else if (paramName == "en_state") {
+            if (paramValue == "on" || paramValue == "true" || paramValue == "1") {
+                enState = true;
+                // 保存到preferences
+                preferences.putBool("enState", true);
+                Serial.println("电源状态已设为开启");
+            } 
+            else if (paramValue == "off" || paramValue == "false" || paramValue == "0") {
+                enState = false;
+                // 保存到preferences
+                preferences.putBool("enState", false);
+                Serial.println("电源状态已设为关闭");
+            }
+            else {
+                Serial.println("无效的电源状态值，使用 on/off, true/false 或 1/0");
+            }
+        }
+        else if (paramName == "save") {
+            // 立即保存所有当前设置
+            preferences.putString("deviceID", deviceID);
+            preferences.putString("batteryID", batteryID);
+            preferences.putString("wsHost", wsHostStr);
+            preferences.putUShort("wsPort", wsPort);
+            preferences.putString("apiKey", apiKeyStr);
+            preferences.putString("wifiSsid", ssidStr);
+            preferences.putString("wifiPass", passwordStr);
+            preferences.putBool("enState", enState);
+            Serial.println("所有配置已保存");
+        }
+        else if (paramName == "reset") {
+            // 重置所有配置
+            preferences.clear();
+            Serial.println("所有配置已重置为默认值");
+            Serial.println("请重启设备以应用默认配置");
+        }
+        else {
+            Serial.print("未知的配置参数: ");
+            Serial.println(paramName);
+            Serial.println("输入 config:help 查看帮助");
+        }
+    }
+    else if (command.startsWith("en:")) {
         String value = command.substring(3);
         value.trim();
         
         if (value == "on") {
             enState = true;
-            Serial.println("EN状态已设为开启");
+            // 保存到preferences
+            preferences.putBool("enState", true);
+            Serial.println("电源状态已设为开启");
         } else if (value == "off") {
             enState = false;
-            Serial.println("EN状态已设为关闭");
+            // 保存到preferences
+            preferences.putBool("enState", false);
+            Serial.println("电源状态已设为关闭");
         } else {
-            Serial.println("无效的EN命令，使用 on 或 off");
-        }
-    }
-    else if (command.startsWith("id:")) {
-        String newID = command.substring(3);
-        newID.trim();
-        
-        if (newID.length() > 0) {
-            deviceID = newID;
-            Serial.print("设备ID已更新为: ");
-            Serial.println(deviceID);
-        } else {
-            Serial.println("无效的ID");
-        }
-    }
-    else if (command.startsWith("wifi:")) {
-        String wifiConfig = command.substring(5);
-        int commaPos = wifiConfig.indexOf(',');
-        
-        if (commaPos > 0) {
-            String newSSID = wifiConfig.substring(0, commaPos);
-            String newPassword = wifiConfig.substring(commaPos + 1);
-            
-            newSSID.trim();
-            newPassword.trim();
-            
-            if (newSSID.length() > 0 && newPassword.length() > 0) {
-                // 更新WiFi设置
-                ssid = strdup(newSSID.c_str());
-                password = strdup(newPassword.c_str());
-                
-                Serial.println("WiFi设置已更新，重新连接中...");
-                WiFi.disconnect();
-                WiFi.begin(ssid, password);
-            } else {
-                Serial.println("无效的WiFi设置");
-            }
-        } else {
-            Serial.println("无效的WiFi命令格式，使用 wifi:ssid,password");
-        }
-    }
-    else if (command.startsWith("ws:")) {
-        String wsConfig = command.substring(3);
-        int colonPos = wsConfig.indexOf(':');
-        
-        if (colonPos > 0) {
-            String newHost = wsConfig.substring(0, colonPos);
-            String newPort = wsConfig.substring(colonPos + 1);
-            
-            newHost.trim();
-            newPort.trim();
-            
-            if (newHost.length() > 0 && newPort.length() > 0) {
-                // 更新WebSocket设置
-                wsHost = strdup(newHost.c_str());
-                wsPort = newPort.toInt();
-                
-                Serial.println("WebSocket设置已更新，重新连接中...");
-                webSocket.disconnect();
-                webSocket.begin(wsHost, wsPort, wsPath);
-            } else {
-                Serial.println("无效的WebSocket设置");
-            }
-        } else {
-            Serial.println("无效的WebSocket命令格式，使用 ws:host:port");
-        }
-    }
-    else if (command.startsWith("wskey:")) {
-        String newKey = command.substring(6);
-        newKey.trim();
-        
-        if (newKey.length() > 0) {
-            // 更新WebSocket API密钥
-            API_KEY = strdup(newKey.c_str());
-            
-            Serial.println("WebSocket API密钥已更新，请重新连接认证");
-            isWsAuthenticated = false;
-            
-            // 如果已连接，重新发送认证请求
-            if (isWsConnected) {
-                sendAuthRequest();
-            }
-        } else {
-            Serial.println("无效的API密钥");
-        }
-    }
-    else if (command.startsWith("battery_id:")) {
-        String newID = command.substring(11);
-        newID.trim();
-        
-        if (newID.length() > 0) {
-            // 更新电池ID
-            BATTERY_ID = strdup(newID.c_str());
-            
-            Serial.print("电池ID已更新为: ");
-            Serial.println(BATTERY_ID);
-            
-            // 如果已认证，需要重新认证
-            if (isWsAuthenticated) {
-                isWsAuthenticated = false;
-                if (isWsConnected) {
-                    sendAuthRequest();
-                }
-            }
-        } else {
-            Serial.println("无效的电池ID");
+            Serial.println("无效的电源命令，使用 on 或 off");
         }
     }
     else if (command == "status") {
-        Serial.println("当前状态:");
-        Serial.print("  设备ID: ");
-        Serial.println(deviceID);
-        Serial.print("  WiFi SSID: ");
-        Serial.println(ssid);
-        Serial.print("  EN状态: ");
-        Serial.println(enState ? "ON" : "OFF");
-        Serial.print("  WiFi状态: ");
-        Serial.println(WiFi.status() == WL_CONNECTED ? "已连接" : "未连接");
-        if (WiFi.status() == WL_CONNECTED) {
-            Serial.print("  IP地址: ");
-            Serial.println(WiFi.localIP().toString());
-        }
-        Serial.print("  电压: ");
-        Serial.print(ina226.readBusVoltage(), 2);  // 使用INA226类方法
-        Serial.println(" V");
-        Serial.print("  电流: ");
-        Serial.print(ina226.readCurrent(), 3);  // 使用INA226类方法
-        Serial.println(" A");
-        Serial.print("  功率: ");
-        Serial.print(ina226.readPower(), 2);  // 使用INA226类方法
-        Serial.println(" W");
-        Serial.print("  温度: ");
-        Serial.print(temperatureRead(), 1);
-        Serial.println(" °C");
-        
-        // 添加WebSocket状态信息
-        Serial.print("  WebSocket服务器: ");
-        Serial.print(wsHost);
-        Serial.print(":");
-        Serial.println(wsPort);
-        Serial.print("  WebSocket状态: ");
-        Serial.println(isWsConnected ? "已连接" : "未连接");
-        Serial.print("  WebSocket认证: ");
-        Serial.println(isWsAuthenticated ? "已认证" : "未认证");
-        Serial.print("  电池ID: ");
-        Serial.println(BATTERY_ID);
-        
-        #if ENABLE_BMI270
-        Serial.println("  BMI270: 已启用");
-        #else
-        Serial.println("  BMI270: 未启用");
-        #endif
+        // 兼容旧的status命令，重定向到config:status
+        processCommand("config:status");
     }
     else {
-        Serial.println("未知命令");
+        Serial.println("未知命令，输入config:help查看帮助");
     }
 }
 
@@ -544,6 +781,24 @@ private:
     float getChipTemperature() {
         // 实际读取ESP32内部温度传感器
         return temperatureRead();
+    }
+    
+    // 修正当前检测，消除小噪声
+    float correctCurrent(float rawCurrent) {
+        // 忽略非常小的电流值，认为是噪声
+        if (fabs(rawCurrent) < 0.05) {
+            return 0.0;
+        }
+        return rawCurrent;
+    }
+    
+    // 修正电压检测
+    float correctVoltage(float rawVoltage) {
+        // 如果电压低于某个阈值，可能是传感器噪声
+        if (rawVoltage < 1.0) {
+            return 0.0;
+        }
+        return rawVoltage;
     }
 
 public:
@@ -570,10 +825,39 @@ public:
     SensorData getData() {
         SensorData data;
         
-        // 从INA226读取实际电压和电流
-        data.voltage = ina226.readBusVoltageFiltered();  // 使用带滤波的方法
-        data.current = ina226.readCurrentFiltered();     // 使用带滤波的方法
-        data.power = ina226.readPowerFiltered();        // 使用带滤波的方法
+        // 读取原始数据并进行校正
+        float rawVoltage = ina226.readBusVoltageFiltered();
+        float rawCurrent = ina226.readCurrentFiltered();
+        float rawPower = ina226.readPowerFiltered();
+        
+        // 应用校正并填充数据
+        data.voltage = correctVoltage(rawVoltage);
+        data.current = correctCurrent(rawCurrent);
+        data.power = rawPower;  // 使用读取的功率值，也可以根据校正后的电压电流重新计算
+        
+        // 每10秒打印一次详细的电流电压情况
+        static unsigned long lastDebugTime = 0;
+        unsigned long now = millis();
+        if (now - lastDebugTime > 10000) {
+            Serial.println("INA226详细读数:");
+            Serial.print("  原始电压: "); 
+            Serial.print(rawVoltage, 3); 
+            Serial.print(" V, 校正后: "); 
+            Serial.print(data.voltage, 3);
+            Serial.println(" V");
+            
+            Serial.print("  原始电流: "); 
+            Serial.print(rawCurrent, 3); 
+            Serial.print(" A, 校正后: "); 
+            Serial.print(data.current, 3);
+            Serial.println(" A");
+            
+            Serial.print("  原始功率: "); 
+            Serial.print(rawPower, 3); 
+            Serial.println(" W");
+            
+            lastDebugTime = now;
+        }
         
         // 根据电压自动判断电池节数
         if (data.voltage < 4.5) {
@@ -674,10 +958,10 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                             Serial.print("目标设备ID: ");
                             Serial.println(targetId);
                             Serial.print("当前设备ID: ");
-                            Serial.println(BATTERY_ID);
+                            Serial.println(batteryID);
                             
                             // 如果ID匹配才处理
-                            if(targetId.equals(BATTERY_ID)) {
+                            if(targetId.equals(batteryID)) {
                                 handlePowerCommand(powerState);
                             } else {
                                 Serial.println("终端ID不匹配，忽略命令");
@@ -698,7 +982,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
                     DynamicJsonDocument pingResp(256);
                     pingResp["type"] = "pong";
                     pingResp["timestamp"] = getISOTimestamp();
-                    pingResp["device_id"] = BATTERY_ID;
+                    pingResp["device_id"] = batteryID;
                     
                     String pongStr;
                     serializeJson(pingResp, pongStr);
@@ -728,12 +1012,16 @@ void sendAuthRequest() {
     
     Serial.println("发送WebSocket认证请求...");
     
+    // 获取最新的指针引用
+    const char* batteryIdPtr = batteryID.c_str();
+    const char* apiKeyPtr = apiKeyStr.c_str();
+    
     // 创建JSON对象
     DynamicJsonDocument doc(1024);
     doc["type"] = "auth";
-    doc["apiKey"] = API_KEY;
+    doc["apiKey"] = apiKeyPtr;
     doc["isDevice"] = true;
-    doc["deviceId"] = BATTERY_ID;
+    doc["deviceId"] = batteryIdPtr;
     
     // 添加设备信息
     JsonObject deviceInfo = doc.createNestedObject("deviceInfo");
@@ -775,12 +1063,15 @@ void sendBatteryData() {
     // 获取电池数据
     BatteryMonitor::SensorData data = batteryMonitor.getData();
     
+    // 获取最新的指针引用
+    const char* batteryIdPtr = batteryID.c_str();
+    
     // 创建JSON对象
     DynamicJsonDocument doc(1024);
     
     // 修改后的JSON结构（数值类型保持为浮点数）
     doc["device_type"] = "battery";
-    doc["terminal_id"] = BATTERY_ID;
+    doc["terminal_id"] = batteryIdPtr;
     doc["device_ip"] = WiFi.localIP().toString();
     doc["timestamp"] = getISOTimestamp();
     doc["interval"] = WS_SEND_INTERVAL;
@@ -852,12 +1143,15 @@ void sendPowerStateResponse(bool powerState) {
         return;
     }
     
+    // 获取最新的指针引用
+    const char* batteryIdPtr = batteryID.c_str();
+    
     // 创建JSON对象
     DynamicJsonDocument doc(1024);
     
     // 简化响应结构，与模拟器保持一致
     doc["type"] = "power_state_response";
-    doc["terminal_id"] = BATTERY_ID;
+    doc["terminal_id"] = batteryIdPtr;
     doc["power_state"] = powerState;
     doc["success"] = true;
     doc["timestamp"] = getISOTimestamp();
@@ -887,10 +1181,13 @@ void sendPing() {
         return; // 未连接或未认证，不发送ping
     }
     
+    // 获取最新的指针引用
+    const char* batteryIdPtr = batteryID.c_str();
+    
     // 创建JSON对象
     DynamicJsonDocument doc(256);
     doc["type"] = "ping";
-    doc["device_id"] = BATTERY_ID;
+    doc["device_id"] = batteryIdPtr;
     doc["timestamp"] = getISOTimestamp();
     
     // 序列化JSON
@@ -908,11 +1205,17 @@ void sendPing() {
 // WebSocket连接任务
 void wsClientTask(void *parameter) {
     // 初始化WebSocket
-    webSocket.begin(wsHost, wsPort, wsPath);
+    const char* wsHostPtr = wsHostStr.c_str();
+    const char* wsPathPtr = wsPathStr.c_str();
+    webSocket.begin(wsHostPtr, wsPort, wsPathPtr);
     webSocket.onEvent(webSocketEvent);
     webSocket.setReconnectInterval(5000); // 5秒重连一次
     
     while (1) {
+        // 更新字符串指针，确保访问最新内容
+        const char* batteryIdPtr = batteryID.c_str();
+        const char* apiKeyPtr = apiKeyStr.c_str();
+        
         // 保持WebSocket连接
         webSocket.loop();
         
@@ -981,19 +1284,6 @@ void userControlTask(void *parameter) {
     }
 }
 
-// 打印命令列表的辅助函数
-void printCommandList() {
-    Serial.println("\n可用命令:");
-    Serial.println("  en:on - 打开EN引脚");
-    Serial.println("  en:off - 关闭EN引脚");
-    Serial.println("  id:xxx - 设置设备ID为xxx");
-    Serial.println("  wifi:ssid,password - 设置WiFi");
-    Serial.println("  ws:host:port - 设置WebSocket服务器");
-    Serial.println("  wskey:apikey - 设置WebSocket API密钥");
-    Serial.println("  battery_id:xxx - 设置电池ID为xxx");
-    Serial.println("  status - 显示当前状态");
-}
-
 // 修改数据更新任务
 void updateTask(void *parameter) {
     while (1) {
@@ -1045,13 +1335,13 @@ void wifiTask(void *parameter) {
     WiFi.mode(WIFI_STA);
     
     // 开始连接WiFi
-    WiFi.begin(ssid, password);
+    WiFi.begin(ssidStr.c_str(), passwordStr.c_str());
     
     while (1) {
         if (WiFi.status() != WL_CONNECTED) {
             // 如果断开连接，尝试重连
             WiFi.reconnect();
-            batteryMonitor.updateWiFiStatus(false, "Connecting...");
+            batteryMonitor.updateWiFiStatus(false, "连接中...");
         } else {
             // 确保IP地址始终是最新的
             batteryMonitor.updateWiFiStatus(true, WiFi.localIP().toString());
@@ -1095,12 +1385,69 @@ void bmi270Task(void *parameter) {
 void setup() {
     Serial.begin(115200);
     
+    // 打开preferences命名空间
+    preferences.begin("smartbaty", false);
+    
+    // 读取保存的配置项 (如果不存在则使用默认值)
+    deviceID = preferences.getString("deviceID", deviceID);
+    String savedBatteryID = preferences.getString("batteryID", batteryID);
+    String savedWsHost = preferences.getString("wsHost", wsHostStr);
+    uint16_t savedWsPort = preferences.getUShort("wsPort", wsPort);
+    String savedApiKey = preferences.getString("apiKey", apiKeyStr);
+    String savedSsid = preferences.getString("wifiSsid", ssidStr);
+    String savedPassword = preferences.getString("wifiPass", passwordStr);
+    enState = preferences.getBool("enState", enState);
+    
+    // 更新全局变量
+    if (savedBatteryID.length() > 0) batteryID = savedBatteryID;
+    if (savedWsHost.length() > 0) wsHostStr = savedWsHost;
+    if (savedWsPort > 0) wsPort = savedWsPort;
+    if (savedApiKey.length() > 0) apiKeyStr = savedApiKey;
+    if (savedSsid.length() > 0) ssidStr = savedSsid;
+    if (savedPassword.length() > 0) passwordStr = savedPassword;
+    
+    Serial.println("已加载保存的配置");
+    Serial.print("设备ID: ");
+    Serial.println(deviceID);
+    Serial.print("电池ID: ");
+    Serial.println(batteryID);
+    
     // 统一初始化I2C
-    if (!Wire.begin()) {
-        Serial.println("I2C初始化失败!");
-        while (1);
-    }
+    Wire.begin(SDA_PIN, SCL_PIN);
+    Wire.setClock(100000); // 降低I2C时钟速率到100kHz，增加通信稳定性
+    
     Serial.println("I2C初始化成功");
+    Serial.print("使用引脚 - SDA: ");
+    Serial.print(SDA_PIN);
+    Serial.print(", SCL: ");
+    Serial.println(SCL_PIN);
+
+    // 扫描I2C总线，查找连接的设备
+    Serial.println("扫描I2C总线...");
+    uint8_t deviceCount = 0;
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        uint8_t error = Wire.endTransmission();
+        
+        if (error == 0) {
+            Serial.print("发现I2C设备，地址: 0x");
+            if (addr < 16) Serial.print("0");
+            Serial.println(addr, HEX);
+            
+            if (addr == INA226_ADDR) {
+                Serial.println("  -> 这是INA226的地址");
+            }
+            deviceCount++;
+        }
+    }
+    
+    if (deviceCount == 0) {
+        Serial.println("没有发现I2C设备，请检查连接!");
+    } else {
+        Serial.print("共发现 ");
+        Serial.print(deviceCount);
+        Serial.println(" 个I2C设备");
+    }
 
     configTime(8 * 3600, 0, "pool.ntp.org", "time.nist.gov");
     
@@ -1123,21 +1470,87 @@ void setup() {
     digitalWrite(EN_GPIO_NUM, enState ? HIGH : LOW);
 
     // 初始化INA226
-    if (ina226.begin(6.0))
-    {
-        Serial.println("INA226初始化成功");
+    Serial.println("开始初始化INA226...");
+    
+    // 增加延时让I2C稳定
+    delay(500);  // 增加到500ms
+    
+    // 先检查INA226是否可访问
+    Wire.beginTransmission(INA226_ADDR);
+    byte errorCode = Wire.endTransmission();
+    
+    if (errorCode != 0) {
+        Serial.print("无法访问INA226，错误码: ");
+        Serial.println(errorCode);
+        Serial.println("错误说明:");
+        switch(errorCode) {
+            case 1: Serial.println("  数据过长"); break;
+            case 2: Serial.println("  传输中收到NACK"); break;
+            case 3: Serial.println("  接收数据时收到NACK"); break;
+            case 4: Serial.println("  其他错误"); break;
+            default: Serial.println("  未知错误"); break;
+        }
+        Serial.println("尝试重新初始化...");
+        Wire.begin(SDA_PIN, SCL_PIN);
+        Wire.setClock(50000);  // 降低至50kHz
+        delay(1000);  // 再延时1秒
     }
-    else
-    {
-        Serial.println("INA226初始化失败");
+    
+    // 尝试三次初始化INA226
+    bool ina226Initialized = false;
+    for (int attempt = 0; attempt < 3 && !ina226Initialized; attempt++) {
+        Serial.print("INA226初始化尝试 #");
+        Serial.println(attempt + 1);
+        
+        if (ina226.begin(10.0)) {  // 最大电流设为10A，提高测量精度
+            ina226Initialized = true;
+            Serial.println("INA226初始化成功");
+            
+            // 设置偏移补偿，需根据实际测量调整
+            ina226.setCurrentOffset(0.0);  // 先设为0进行测试
+            ina226.setPowerOffset(0.0);
+            
+            // 设置滤波系数
+            ina226.setFilterAlpha(0.3);  // 平衡响应速度和稳定性
+            
+            // 打印测试读数
+            Serial.println("INA226初始读数:");
+            Serial.print("  总线电压: ");
+            Serial.print(ina226.readBusVoltage(), 3);
+            Serial.println(" V");
+            Serial.print("  分流电压: ");
+            Serial.print(ina226.readShuntVoltage() * 1000, 3);
+            Serial.println(" mV");
+            Serial.print("  电流: ");
+            Serial.print(ina226.readCurrent(), 3);
+            Serial.println(" A");
+            Serial.print("  功率: ");
+            Serial.print(ina226.readPower(), 3);
+            Serial.println(" W");
+        } else {
+            Serial.println("INA226初始化失败");
+            Serial.println("等待500ms后重试...");
+            Wire.begin(SDA_PIN, SCL_PIN);  // 重新初始化I2C
+            Wire.setClock(50000 - (attempt * 10000));  // 每次尝试降低速度
+            delay(500);
+        }
     }
-
-    // 设置偏移补偿
-    ina226.setCurrentOffset(-0.012);
-    ina226.setPowerOffset(0);
-
-    // 设置滤波参数（可选）
-    ina226.setFilterAlpha(0.8);
+    
+    if (!ina226Initialized) {
+        Serial.println("INA226初始化最终失败 - 检查接线和I2C地址");
+        Serial.println("程序继续执行，但电流和电压测量可能不准确");
+        Serial.print("I2C地址: 0x");
+        Serial.println(INA226_ADDR, HEX);
+        Serial.print("SDA引脚: ");
+        Serial.println(SDA_PIN);
+        Serial.print("SCL引脚: ");
+        Serial.println(SCL_PIN);
+        Serial.println("建议检查:");
+        Serial.println("1. 检查INA226电源是否接通");
+        Serial.println("2. 确认SDA/SCL引脚连接正确");
+        Serial.println("3. 检查是否有上拉电阻(建议4.7kΩ)");
+        Serial.println("4. 尝试减少I2C总线长度或干扰");
+    }
 
     if (!display.begin()) {
         Serial.println("OLED初始化失败!");

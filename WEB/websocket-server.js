@@ -447,12 +447,18 @@ wss.on('connection', function connection(ws, req) {
                 broadcastToWebClients(data, ws);
             }
             
+            // 在消息处理部分添加：
+            console.log('收到原始电池数据:', message.toString());
+            
         } catch (e) {
             console.error(`数据解析错误 (${ip}): `, e.message);
             ws.send(JSON.stringify({
                 type: 'error',
                 message: '数据格式错误: ' + e.message
             }));
+            
+            // 在验证失败时添加详细日志：
+            console.warn('数据验证失败，无效字段:', JSON.stringify(data));
         }
     });
 

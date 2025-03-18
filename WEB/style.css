@@ -1,0 +1,735 @@
+/* 现代化界面样式 - 传感器监控系统 */
+
+:root {
+    --primary-color: #3498db;
+    --primary-dark: #2980b9;
+    --secondary-color: #2ecc71;
+    --secondary-dark: #27ae60;
+    --accent-color: #9b59b6;
+    --warning-color: #f39c12;
+    --danger-color: #e74c3c;
+    --text-dark: #2c3e50;
+    --text-light: #34495e;
+    --text-lighter: #7f8c8d;
+    --bg-light: #ecf0f1;
+    --bg-white: #ffffff;
+    --shadow-light: 0 2px 10px rgba(0,0,0,0.05);
+    --shadow-medium: 0 5px 15px rgba(0,0,0,0.1);
+    --shadow-heavy: 0 10px 25px rgba(0,0,0,0.15);
+    --radius-small: 6px;
+    --radius-medium: 12px;
+    --radius-large: 20px;
+    --transition-quick: all 0.2s ease;
+    --transition-normal: all 0.3s ease;
+}
+
+body {
+    font-family: 'Noto Sans SC', 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+    color: var(--text-dark);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 30px 20px;
+}
+
+h1, h2, h3, h4 {
+    font-weight: 600;
+    line-height: 1.3;
+    margin-top: 0;
+}
+
+h1 {
+    color: var(--text-dark);
+    text-align: center;
+    margin-bottom: 40px;
+    font-size: 2.4em;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    position: relative;
+    padding-bottom: 15px;
+}
+
+h1:after {
+    content: '';
+    position: absolute;
+    width: 60px;
+    height: 4px;
+    background: var(--primary-color);
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 2px;
+}
+
+h2 {
+    font-size: 1.8em;
+    color: var(--text-dark);
+    margin-bottom: 20px;
+}
+
+h3 {
+    font-size: 1.3em;
+    color: var(--text-dark);
+    margin-bottom: 15px;
+}
+
+/* 数据卡片通用样式 */
+.data-card {
+    background-color: var(--bg-white);
+    border-radius: var(--radius-medium);
+    box-shadow: var(--shadow-medium);
+    transition: var(--transition-normal);
+    overflow: hidden;
+    margin-bottom: 30px;
+}
+
+.data-card:hover {
+    box-shadow: var(--shadow-heavy);
+    transform: translateY(-3px);
+}
+
+.data-card-header {
+    padding: 20px 25px;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.data-card-header h2 {
+    margin: 0;
+    font-size: 1.5em;
+}
+
+.data-card-body {
+    padding: 25px;
+}
+
+/* 状态面板样式 */
+.status-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+    background: var(--bg-white);
+    border-radius: var(--radius-small);
+    padding: 15px;
+    box-shadow: var(--shadow-light);
+}
+
+.status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    background: var(--bg-light);
+    border-radius: var(--radius-small);
+    transition: var(--transition-quick);
+}
+
+.status-item:hover {
+    background: #e5e8eb;
+    transform: translateY(-2px);
+}
+
+.status-label {
+    color: var(--text-light);
+    font-weight: 500;
+    font-size: 0.95em;
+}
+
+.status-value {
+    color: var(--primary-color);
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 500;
+    font-size: 1em;
+}
+
+.status-value.connected {
+    color: var(--secondary-color);
+}
+
+.status-value.disconnected {
+    color: var(--danger-color);
+}
+
+.status-value.partial {
+    color: var(--warning-color);
+}
+
+/* 传感器数据和电池终端数据 */
+#sensor-data, #battery-terminal-data {
+    background-color: transparent;
+    border-radius: 0;
+    box-shadow: none;
+    max-width: 100%;
+    margin: 0 auto 30px;
+    padding: 0;
+}
+
+.data-section {
+    margin-bottom: 25px;
+    padding: 20px;
+    background: var(--bg-white);
+    border-radius: var(--radius-medium);
+    box-shadow: var(--shadow-medium);
+    transition: var(--transition-normal);
+}
+
+.data-section:hover {
+    box-shadow: var(--shadow-heavy);
+}
+
+.data-section h3 {
+    color: var(--text-dark);
+    margin: 0 0 20px 0;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #eee;
+    font-size: 1.3em;
+    position: relative;
+}
+
+.data-section h3:after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 40px;
+    height: 2px;
+    background: var(--primary-color);
+}
+
+#sensor-data p, .battery-data p {
+    margin: 15px 0;
+    padding: 15px;
+    background: var(--bg-light);
+    border-radius: var(--radius-small);
+    transition: var(--transition-quick);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#sensor-data p:hover, .battery-data p:hover {
+    transform: translateX(5px);
+    background: #e5e8eb;
+}
+
+#sensor-data strong, .battery-data strong {
+    color: var(--text-light);
+    font-size: 1.05em;
+    min-width: 120px;
+    font-weight: 500;
+}
+
+.value {
+    font-size: 1.2em;
+    color: var(--secondary-color);
+    font-weight: 500;
+    font-family: 'Roboto Mono', monospace;
+}
+
+/* 电池终端数据样式 */
+.battery-info {
+    margin-bottom: 20px;
+}
+
+.battery-data {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: stretch;
+}
+
+.battery-data .data-section {
+    flex: 1;
+    min-width: 250px;
+    margin-bottom: 0;
+}
+
+/* 重新设计电池状态可视化布局 */
+.battery-status-visual {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 25px;
+    background: var(--bg-white);
+    border-radius: var(--radius-medium);
+    box-shadow: var(--shadow-medium);
+    min-width: 200px;
+    transition: var(--transition-normal);
+    gap: 20px;
+}
+
+.visual-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.visual-label {
+    font-size: 0.9em;
+    color: var(--text-light);
+    font-weight: 500;
+}
+
+/* 电池图标样式保持不变 */
+.battery-icon {
+    width: 100px;
+    height: 50px;
+    border: 3px solid var(--text-dark);
+    border-radius: 6px;
+    position: relative;
+    margin-bottom: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.battery-icon:after {
+    content: '';
+    position: absolute;
+    right: -12px;
+    top: 18px;
+    width: 8px;
+    height: 24px;
+    background: var(--text-dark);
+    border-radius: 0 3px 3px 0;
+}
+
+/* 电池电量级别样式 */
+.battery-level {
+    height: 100%;
+    background: linear-gradient(90deg, var(--secondary-color) 0%, #2ecc71 100%);
+    border-radius: 3px;
+    transition: width 0.5s ease, background 0.5s ease;
+}
+
+.battery-level.low {
+    background: linear-gradient(90deg, var(--danger-color) 0%, #c0392b 100%);
+}
+
+.battery-level.medium {
+    background: linear-gradient(90deg, var(--warning-color) 0%, #f1c40f 100%);
+}
+
+/* 功率柱状图样式 */
+.power-bar-container {
+    width: 50px;
+    height: 100px;
+    border: 2px solid var(--text-dark);
+    border-radius: 4px;
+    position: relative;
+    background: rgba(220, 220, 220, 0.3);
+    overflow: hidden;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.power-bar {
+    position: absolute;
+    width: 100%;
+    bottom: 0;
+    background: linear-gradient(180deg, var(--secondary-color) 0%, #2ecc71 100%);
+    transition: height 0.5s ease, background 0.5s ease;
+    border-radius: 2px 2px 0 0;
+}
+
+.power-bar.high {
+    background: linear-gradient(180deg, var(--danger-color) 0%, #c0392b 100%);
+}
+
+.power-bar.medium {
+    background: linear-gradient(180deg, var(--warning-color) 0%, #f1c40f 100%);
+}
+
+.power-bar.low {
+    background: linear-gradient(180deg, var(--secondary-color) 0%, #2ecc71 100%);
+}
+
+.power-bar.very-low {
+    background: linear-gradient(180deg, var(--accent-color) 0%, #8e44ad 100%);
+}
+
+.power-percent {
+    font-size: 1em;
+    font-weight: 500;
+    color: var(--text-dark);
+    font-family: 'Roboto Mono', monospace;
+}
+
+/* 状态指示器共享样式 */
+.battery-percent, .power-percent {
+    font-size: 1em;
+    font-weight: 500;
+    color: var(--text-dark);
+    font-family: 'Roboto Mono', monospace;
+    margin-top: 5px;
+}
+
+/* 日志面板 */
+.log-panel {
+    margin-top: 30px;
+    padding: 20px;
+    background: var(--bg-white);
+    border-radius: var(--radius-medium);
+    box-shadow: var(--shadow-medium);
+}
+
+.log-panel h3 {
+    color: var(--text-dark);
+    margin: 0 0 15px 0;
+}
+
+#error-log {
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 15px;
+    background: var(--bg-light);
+    border-radius: var(--radius-small);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.9em;
+}
+
+.log-entry {
+    margin: 8px 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-small);
+    background: rgba(255,255,255,0.6);
+    box-shadow: var(--shadow-light);
+}
+
+.log-entry.error {
+    color: var(--danger-color);
+    border-left: 3px solid var(--danger-color);
+}
+
+.log-entry.info {
+    color: var(--primary-color);
+    border-left: 3px solid var(--primary-color);
+}
+
+/* 可视化面板 */
+.visualization-panel {
+    margin: 30px 0;
+    padding: 20px;
+    background: var(--bg-white);
+    border-radius: var(--radius-medium);
+    box-shadow: var(--shadow-medium);
+}
+
+.visualization-panel h3 {
+    color: var(--text-dark);
+    margin: 0 0 15px 0;
+}
+
+#cube-container {
+    width: 100%;
+    height: 400px;
+    background: var(--bg-light);
+    border-radius: var(--radius-small);
+    overflow: hidden;
+}
+
+/* 按钮和交互元素样式 */
+.btn {
+    display: inline-block;
+    padding: 8px 16px;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--radius-small);
+    font-family: 'Noto Sans SC', sans-serif;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-quick);
+    outline: none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.btn:hover {
+    background: var(--primary-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+}
+
+/* 添加页面加载动画 */
+.loader {
+    border: 3px solid #f3f3f3;
+    border-radius: 50%;
+    border-top: 3px solid var(--primary-color);
+    width: 20px;
+    height: 20px;
+    animation: spin 1s linear infinite;
+    display: inline-block;
+    margin-right: 10px;
+    vertical-align: middle;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* 新增的电池终端相关样式 */
+#battery-terminals-container {
+    margin-bottom: 30px;
+}
+
+.battery-header-card {
+    margin-bottom: 15px;
+}
+
+.battery-terminal {
+    margin-bottom: 15px;
+    border-left: 4px solid var(--primary-color);
+    transition: var(--transition-normal);
+}
+
+.battery-terminal:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-heavy);
+}
+
+.battery-terminal .data-card-header {
+    justify-content: space-between;
+}
+
+.battery-terminal .terminal-id {
+    display: block;
+    font-size: 0.85em;
+    color: var(--text-lighter);
+    margin-top: 5px;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.connection-badge {
+    background-color: var(--danger-color);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 20px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+
+.connection-badge.connected {
+    background-color: var(--secondary-color);
+}
+
+/* 电池终端控制样式 */
+.terminal-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.power-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    padding: 0;
+    background: var(--text-lighter);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition-quick);
+    position: relative;
+    overflow: hidden;
+}
+
+.power-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.power-btn:not(:disabled):hover {
+    transform: translateY(-2px);
+    background: var(--text-light);
+}
+
+.power-btn.on {
+    background: var(--secondary-color);
+}
+
+.power-btn.off {
+    background: var(--danger-color);
+}
+
+.power-icon {
+    position: relative;
+    display: block;
+    width: 16px;
+    height: 16px;
+}
+
+.power-icon:before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 10px;
+    background: white;
+    transform: translateX(-50%);
+    border-radius: 1px;
+}
+
+.power-icon:after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 16px;
+    height: 16px;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-sizing: border-box;
+    clip-path: polygon(50% 50%, 100% 0%, 100% 100%);
+}
+
+.battery-power-state.on {
+    color: var(--secondary-color);
+}
+
+.battery-power-state.off {
+    color: var(--danger-color);
+}
+
+/* 姿态可视化控制面板样式 */
+.visualization-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+}
+
+/* 确保在传感器数据卡片标题栏中正确显示 */
+#sensor-data .data-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+/* 改进下拉菜单样式，使其更突出 */
+.gyro-select {
+    padding: 6px 10px;
+    border-radius: var(--radius-small);
+    border: 1px solid #ddd;
+    background-color: var(--bg-white);
+    color: var(--text-dark);
+    font-family: inherit;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: var(--transition-quick);
+    box-shadow: var(--shadow-light);
+    min-width: 150px;
+}
+
+.gyro-select:hover {
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow-medium);
+}
+
+.gyro-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.3);
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    body {
+        padding: 0;
+    }
+    
+    .container {
+        padding: 20px 15px;
+    }
+    
+    h1 {
+        font-size: 1.8em;
+        margin-bottom: 30px;
+    }
+    
+    .data-section, .battery-status-visual, .status-panel, .log-panel, .visualization-panel {
+        padding: 15px;
+    }
+    
+    #sensor-data p, .battery-data p {
+        padding: 12px 10px;
+        font-size: 0.9em;
+    }
+    
+    .battery-data {
+        flex-direction: column;
+    }
+    
+    .battery-status-visual {
+        flex-direction: column;
+        width: 100%;
+        align-items: center;
+        gap: 30px;
+    }
+    
+    .power-bar-container {
+        height: 80px;
+    }
+    
+    .status-panel {
+        grid-template-columns: 1fr;
+    }
+    
+    #cube-container {
+        height: 300px;
+    }
+    
+    .btn {
+        padding: 6px 12px;
+        font-size: 0.85em;
+    }
+    
+    .battery-terminal .data-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .connection-badge {
+        margin-top: 10px;
+        align-self: flex-start;
+    }
+    
+    .terminal-controls {
+        margin-top: 10px;
+        width: 100%;
+        justify-content: space-between;
+    }
+    
+    .visualization-controls {
+        margin-top: 10px;
+        margin-left: 0;
+        width: 100%;
+    }
+    
+    .gyro-select {
+        width: 100%;
+    }
+    
+    #sensor-data .data-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
